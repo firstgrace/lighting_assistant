@@ -157,6 +157,10 @@ button {
   letter-spacing: 0;
 }
 
+.task-detail strong {
+  color: var(--accent);
+}
+
 .task-detail {
   position: absolute;
   left: 16px;
@@ -332,7 +336,15 @@ button {
 }
 
 .topic {
+  display: grid;
+  gap: 4px;
   font-size: 24px;
+}
+
+.topic span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .toolbar-actions {
@@ -551,6 +563,16 @@ button {
   background: #15161a;
 }
 
+.color-row.is-locked {
+  min-height: 44px;
+  color: var(--muted);
+}
+
+.color-row.is-locked strong {
+  color: #f1f5f9;
+  font-size: 13px;
+}
+
 .submit-wrap {
   padding: 4px 16px 18px;
 }
@@ -629,6 +651,33 @@ button {
   border-radius: 7px;
   font-size: 14px;
   font-weight: 800;
+}
+
+.provisional-note {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.critique-block,
+.reflection-block {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.critique-block h2,
+.reflection-block h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.reflection-block p {
+  margin: 0;
+  color: #f7f7d2;
+  font-size: 14px;
+  line-height: 1.8;
 }
 
 .critique {

@@ -194,10 +194,16 @@ assert(api.isLightKindMismatch({ light: {} }, { kind: 'spot' }) === true, 'Area 
 assert(api.state.phase === 'setup', 'initial phase should be setup');
 assert(app.querySelector('#start'), 'start button should exist');
 assert(app.querySelectorAll('.task-choice').length === 5, 'five task choices should exist');
+assert(app.innerHTML.includes('見やすい'), 'setup should show the new uniform visibility label');
+assert(app.innerHTML.includes('立体的'), 'setup should show the new shape emphasis label');
+assert(app.innerHTML.includes('やわらかい'), 'setup should show the new soft lighting label');
+assert(app.innerHTML.includes('くっきり'), 'setup should show the new background separation label');
+assert(app.innerHTML.includes('目を引く'), 'setup should show the new visual focus label');
+assert(app.innerHTML.includes('作品全体に大きな明るさのムラ'), 'setup should show task descriptions');
 assertAllButtonsAreNonSubmit(app);
 
 app.querySelectorAll('.task-choice')[1].click();
-assert(api.state.taskId === 'dread', 'task card click should select dread');
+assert(api.state.taskId === 'shape_emphasis', 'task card click should select shape emphasis');
 
 app.querySelectorAll('.model-btn')[2].click();
 assert(api.state.modelId === 'figure', 'model button should switch subject model');
@@ -220,14 +226,15 @@ assert(api.state.activeLight === 1, 'light tab should switch active light');
 app.querySelectorAll('.type-btn').find((button) => button.dataset.kind === 'spot').click();
 assert(api.state.lights[1].kind === 'spot', 'type toggle should switch active light to spot');
 
+assert(api.allowLightColorEditing === false, 'basic training should disable light color editing');
+assert(!app.querySelector('#color'), 'color input should be hidden in basic training');
+assert(api.state.lights.every((light) => light.color === api.BASIC_TRAINING_LIGHT_COLOR), 'basic training lights should use fixed white color');
+assert(app.innerHTML.includes('ライト強度'), 'operation should use light-side intensity wording');
+assert(!app.innerHTML.includes('照度</span>'), 'operation should not label light controls as illuminance');
+
 const xSlider = app.querySelectorAll('input[type="range"][data-param]').find((slider) => slider.dataset.param === 'x');
 input(xSlider, 6);
 assert(api.state.lights[1].x === 6, 'x slider should update active light x');
-
-input(app.querySelector('#color'), '#ff0000');
-assert(api.state.lights[1].color === '#ff0000', 'color input should update active light color');
-assert(api.state.phase === 'operation', 'color input should not leave operation phase');
-assert(app.querySelector('#color'), 'color input should remain mounted while editing');
 
 const yNumber = app.querySelectorAll('input[type="number"][data-param]').find((inputElement) => inputElement.dataset.param === 'y');
 changeValue(yNumber, -3.5);
@@ -257,6 +264,8 @@ assertAllButtonsAreNonSubmit(app);
 const scoreText = app.innerHTML;
 assert(scoreText.includes('/100'), 'feedback score should include /100');
 assert(scoreText.includes('70/100'), 'feedback should explain the passing score');
+assert(scoreText.includes('フィードバック'), 'feedback critique should be separated from operation hints');
+assert(scoreText.includes('内省の問い'), 'reflection question should be separated from score result');
 assert(app.querySelector('.score-bar-row'), 'score bar rows should exist');
 const feedbackHandle = app.querySelector('.feedback-drag-handle');
 feedbackHandle.dispatchEvent({ type: 'pointerdown', target: feedbackHandle, clientX: 20, clientY: 20, pointerId: 3 });

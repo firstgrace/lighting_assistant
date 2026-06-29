@@ -2,77 +2,86 @@ let THREE = null;
 let RectAreaLightUniformsLib = null;
 let scene = createFallbackScene();
 const PASS_SCORE = 70;
+const BASIC_TRAINING_LIGHT_COLOR = '#ffffff';
+const trainingMode = 'basic';
+const allowLightColorEditing = trainingMode !== 'basic';
+
+const supportCondition = {
+  showHintsDuringOperation: true,
+  showScoreAfterDecision: true,
+  showPassFailAfterDecision: true,
+  showCritiqueAfterDecision: true,
+  showReflectionQuestionAfterDecision: true,
+};
+
+const legacyTaskIdMap = {
+  flat: 'uniform_visibility',
+  dread: 'shape_emphasis',
+  calm: 'soft_lighting',
+  mystery: 'background_separation',
+  eeriness: 'visual_focus',
+};
 
 const tasks = [
   {
-    id: 'flat',
-    title: '\u5e73\u51e1',
-    detail: '\u5149\u306e\u504f\u308a\u304c\u5c11\u306a\u304f\u3001\u65e5\u5e38\u7684\u3067\u4e2d\u5eb8\u306a\u5370\u8c61\u3092\u76ee\u6307\u3057\u307e\u3059\u3002',
-    rules: [
-      (s) => balanceScore(s, 'intensity', 420, 180),
-      (s) => Math.max(0, 100 - Math.abs(s.lights[0].x - 3) * 12 - Math.abs(s.lights[0].y - 3) * 12),
-      (s) => Math.max(0, 100 - Math.abs(s.lights[0].elevation + 35) * 1.2),
-    ],
-    hint: (s) => [
-      Math.abs(s.lights[0].intensity - s.lights[1].intensity) > 140 ? '\u5149\u91cf\u306e\u5dee\u3092\u5c0f\u3055\u304f\u3057\u3066\u3001\u76ee\u7acb\u3064\u9670\u5f71\u3092\u6291\u3048\u308b\u3002' : '',
-      s.lights[0].z < 2.5 ? '\u4e3b\u5149\u3092\u5c11\u3057\u9ad8\u3044\u4f4d\u7f6e\u306b\u623b\u3059\u3002' : '',
-    ],
+    id: 'uniform_visibility',
+    legacyIds: ['flat'],
+    label: '\u898b\u3084\u3059\u3044',
+    description: '\u4f5c\u54c1\u5168\u4f53\u306b\u5927\u304d\u306a\u660e\u308b\u3055\u306e\u30e0\u30e9\u304c\u306a\u304f\u3001\u3069\u306e\u90e8\u5206\u3082\u898b\u3084\u3059\u3044\u7167\u660e\u3092\u4f5c\u308d\u3046\u3002',
+    learningPoints: ['\u7167\u5ea6\u5206\u5e03', '\u5747\u6589\u5ea6', '\u8907\u6570\u706f\u306e\u30d0\u30e9\u30f3\u30b9'],
+    provisionalEvaluation: '\u76f4\u63a5\u7167\u5ea6\u8a55\u4fa1\u304c\u672a\u63a5\u7d9a\u306e\u5834\u5408\u306f\u3001\u65e7\u300c\u5e73\u51e1\u300d\u8a55\u4fa1\u3092\u5747\u6589\u5ea6\u306e\u66ab\u5b9a\u6307\u6a19\u3068\u3057\u3066\u4f7f\u7528\u3057\u307e\u3059\u3002',
+    rules: [scoreUniformVisibility],
+    hint: hintUniformVisibility,
+    critique: critiqueUniformVisibility,
+    reflectionQuestion: '\u4f5c\u54c1\u306e\u4e2d\u3067\u3001\u307e\u3060\u6697\u304f\u611f\u3058\u308b\u90e8\u5206\u306f\u3069\u3053\u3067\u3057\u305f\u304b\uff1f',
   },
   {
-    id: 'dread',
-    title: '\u5a01\u5727\u611f',
-    detail: '\u786c\u3044\u30b9\u30dd\u30c3\u30c8\u3068\u5f37\u3044\u660e\u6697\u5dee\u3067\u3001\u88ab\u5199\u4f53\u3092\u5727\u5012\u3059\u308b\u5370\u8c61\u3092\u4f5c\u308a\u307e\u3059\u3002',
-    rules: [
-      (s) => maxKindScore(s, 'spot', 'intensity', 820, 260),
-      (s) => 100 - Math.min(100, minKindValue(s, 'spot', 'spread') * 130),
-      (s) => Math.max(0, 100 - averageKindValue(s, 'area', 'intensity') * 0.12),
-    ],
-    hint: () => [
-      '\u30b9\u30dd\u30c3\u30c8\u306e\u62e1\u6563\u7387\u3092\u7d5e\u308a\u3001\u5149\u91cf\u3092\u4e0a\u3052\u308b\u3002',
-      '\u30a8\u30ea\u30a2\u30e9\u30a4\u30c8\u306f\u5f31\u3081\u3001\u9670\u306e\u6fc3\u3055\u3092\u6b8b\u3059\u3002',
-    ],
+    id: 'shape_emphasis',
+    legacyIds: ['dread'],
+    label: '\u7acb\u4f53\u7684',
+    description: '\u4f5c\u54c1\u304c\u5e73\u3089\u306b\u898b\u3048\u306a\u3044\u3088\u3046\u306b\u3001\u5f62\u3084\u51f9\u51f8\u304c\u5206\u304b\u308b\u7167\u660e\u3092\u4f5c\u308d\u3046\u3002',
+    learningPoints: ['\u5165\u5c04\u65b9\u5411', '\u4e3b\u5149\u3068\u88dc\u52a9\u5149', '\u660e\u6697\u6bd4'],
+    provisionalEvaluation: '\u65e7\u300c\u5a01\u5727\u611f\u300d\u8a55\u4fa1\u306e\u660e\u6697\u5dee\u30fb\u30b9\u30dd\u30c3\u30c8\u6027\u3092\u3001\u7acb\u4f53\u611f\u306e\u66ab\u5b9a\u6307\u6a19\u3068\u3057\u3066\u4f7f\u7528\u3057\u307e\u3059\u3002',
+    rules: [scoreShapeEmphasis],
+    hint: hintShapeEmphasis,
+    critique: critiqueShapeEmphasis,
+    reflectionQuestion: '\u660e\u308b\u3044\u9762\u3068\u6697\u3044\u9762\u306e\u9055\u3044\u306f\u3001\u5f62\u3092\u8aad\u3080\u52a9\u3051\u306b\u306a\u3063\u3066\u3044\u307e\u3057\u305f\u304b\uff1f',
   },
   {
-    id: 'eeriness',
-    title: '\u4e0d\u6c17\u5473',
-    detail: '\u4e0b\u65b9\u304b\u3089\u306e\u5149\u3084\u5f37\u3044\u8272\u3067\u3001\u901a\u5e38\u306e\u8996\u899a\u611f\u899a\u3092\u305a\u3089\u3057\u307e\u3059\u3002',
-    rules: [
-      (s) => Math.max(...s.lights.map((l) => l.z < 0 ? 100 : Math.max(0, 100 - l.z * 42))),
-      (s) => Math.max(...s.lights.map((l) => saturation(l.color) * 100)),
-      (s) => Math.max(...s.lights.map((l) => Math.max(0, 100 - Math.abs(l.elevation - 35) * 2))),
-    ],
-    hint: () => [
-      '\u3069\u308c\u304b\u4e00\u706f\u3092\u88ab\u5199\u4f53\u3088\u308a\u4f4e\u304f\u7f6e\u304f\u3002',
-      '\u8272\u306e\u5f69\u5ea6\u3092\u4e0a\u3052\u3066\u3001\u81ea\u7136\u3067\u306f\u306a\u3044\u5149\u306b\u3059\u308b\u3002',
-    ],
+    id: 'soft_lighting',
+    legacyIds: ['calm'],
+    label: '\u3084\u308f\u3089\u304b\u3044',
+    description: '\u5149\u304c\u5f37\u3059\u304e\u305a\u3001\u5f71\u304c\u304f\u3063\u304d\u308a\u3057\u3059\u304e\u306a\u3044\u3001\u843d\u3061\u7740\u3044\u305f\u7167\u660e\u3092\u4f5c\u308d\u3046\u3002',
+    learningPoints: ['\u5149\u6e90\u9762\u7a4d', '\u62e1\u6563', '\u5f71\u306e\u67d4\u3089\u304b\u3055'],
+    provisionalEvaluation: '\u65e7\u300c\u7a4f\u3084\u304b\u300d\u8a55\u4fa1\u306e\u9762\u5149\u6e90\u9762\u7a4d\u30fb\u30b9\u30dd\u30c3\u30c8\u5f31\u5ea6\u3092\u66ab\u5b9a\u6307\u6a19\u3068\u3057\u3066\u4f7f\u7528\u3057\u307e\u3059\u3002',
+    rules: [scoreSoftLighting],
+    hint: hintSoftLighting,
+    critique: critiqueSoftLighting,
+    reflectionQuestion: '\u5f71\u306e\u5883\u754c\u306f\u3001\u5f37\u3059\u304e\u305a\u81ea\u7136\u306b\u898b\u3048\u3066\u3044\u307e\u3057\u305f\u304b\uff1f',
   },
   {
-    id: 'calm',
-    title: '\u7a4f\u3084\u304b',
-    detail: '\u9762\u5149\u6e90\u3092\u4e3b\u5f79\u306b\u3057\u3001\u5f71\u3092\u8584\u304f\u67d4\u3089\u304b\u304f\u3057\u307e\u3059\u3002',
-    rules: [
-      (s) => maxKindScore(s, 'area', 'intensity', 720, 260),
-      (s) => Math.max(...s.lights.filter((l) => l.kind === 'area').map((l) => clamp((l.width * l.height) / 32 * 100, 0, 100)), 0),
-      (s) => Math.max(0, 100 - averageKindValue(s, 'spot', 'intensity') * 0.1),
-    ],
-    hint: () => [
-      '\u30a8\u30ea\u30a2\u30e9\u30a4\u30c8\u306e\u5e45\u3068\u9ad8\u3055\u3092\u5927\u304d\u304f\u3059\u308b\u3002',
-      '\u30b9\u30dd\u30c3\u30c8\u3092\u5f31\u3081\u3001\u786c\u3044\u5f71\u3092\u6e1b\u3089\u3059\u3002',
-    ],
+    id: 'background_separation',
+    legacyIds: ['mystery'],
+    label: '\u304f\u3063\u304d\u308a',
+    description: '\u4f5c\u54c1\u304c\u80cc\u666f\u306b\u57cb\u3082\u308c\u305a\u3001\u5916\u5074\u306e\u5f62\u304c\u5206\u304b\u308b\u7167\u660e\u3092\u4f5c\u308d\u3046\u3002',
+    learningPoints: ['\u9006\u5149', '\u8f2a\u90ed\u5149', '\u80cc\u666f\u3068\u306e\u5206\u96e2', '\u6b63\u9762\u5149\u3068\u306e\u6bd4\u7387'],
+    provisionalEvaluation: '\u65e7\u300c\u795e\u79d8\u7684\u300d\u8a55\u4fa1\u306e\u80cc\u9762\u5149\u30fb\u6b63\u9762\u5149\u6291\u5236\u3092\u3001\u8f2a\u90ed\u5206\u96e2\u306e\u66ab\u5b9a\u6307\u6a19\u3068\u3057\u3066\u4f7f\u7528\u3057\u307e\u3059\u3002',
+    rules: [scoreBackgroundSeparation],
+    hint: hintBackgroundSeparation,
+    critique: critiqueBackgroundSeparation,
+    reflectionQuestion: '\u80cc\u666f\u3068\u4f5c\u54c1\u306e\u5883\u76ee\u306f\u3001\u898b\u5206\u3051\u3084\u3059\u304f\u306a\u3063\u3066\u3044\u307e\u3057\u305f\u304b\uff1f',
   },
   {
-    id: 'mystery',
-    title: '\u795e\u79d8\u7684',
-    detail: '\u80cc\u9762\u3084\u5074\u9762\u304b\u3089\u8f2a\u90ed\u3092\u6d6e\u304b\u305b\u3001\u6b63\u9762\u60c5\u5831\u3092\u6291\u3048\u307e\u3059\u3002',
-    rules: [
-      (s) => Math.max(...s.lights.map((l) => l.y < -5 ? 100 : Math.max(0, 100 - (l.y + 5) * 15))),
-      (s) => Math.max(0, 100 - averageIntensity(s) * 0.08),
-      (s) => Math.max(...s.lights.map((l) => Math.max(0, 100 - Math.abs(Math.abs(l.azimuth) - 180) * 0.5))),
-    ],
-    hint: () => [
-      '\u5149\u3092\u88ab\u5199\u4f53\u306e\u80cc\u9762\u3078\u56de\u3057\u3001\u6b63\u9762\u306e\u5149\u3092\u6291\u3048\u308b\u3002',
-      '\u8f2a\u90ed\u3060\u3051\u304c\u8aad\u3081\u308b\u660e\u308b\u3055\u306b\u8abf\u6574\u3059\u308b\u3002',
-    ],
+    id: 'visual_focus',
+    legacyIds: ['eeriness'],
+    label: '\u76ee\u3092\u5f15\u304f',
+    description: '\u4f5c\u54c1\u306e\u4e2d\u3067\u4e00\u756a\u898b\u305b\u305f\u3044\u90e8\u5206\u306b\u3001\u81ea\u7136\u306b\u8996\u7dda\u304c\u96c6\u307e\u308b\u7167\u660e\u3092\u4f5c\u308d\u3046\u3002',
+    learningPoints: ['\u5c40\u6240\u7167\u660e', '\u30b3\u30f3\u30c8\u30e9\u30b9\u30c8', '\u8996\u7dda\u8a98\u5c0e', '\u80cc\u666f\u3068\u306e\u660e\u6697\u5dee'],
+    provisionalEvaluation: '\u8272\u5f69\u8a55\u4fa1\u3092\u4f7f\u308f\u305a\u3001\u65e7\u30ed\u30b8\u30c3\u30af\u306e\u4f4d\u7f6e\u30fb\u5c40\u6240\u7684\u306a\u5149\u306e\u7279\u5fb4\u3060\u3051\u3092\u66ab\u5b9a\u6307\u6a19\u3068\u3057\u3066\u4f7f\u7528\u3057\u307e\u3059\u3002',
+    rules: [scoreVisualFocus],
+    hint: hintVisualFocus,
+    critique: critiqueVisualFocus,
+    reflectionQuestion: '\u6700\u521d\u306b\u8996\u7dda\u304c\u5411\u304b\u3046\u5834\u6240\u306f\u3001\u610f\u56f3\u3057\u305f\u898b\u305b\u5834\u306b\u306a\u3063\u3066\u3044\u307e\u3057\u305f\u304b\uff1f',
   },
 ];
 
@@ -83,14 +92,14 @@ const models = [
 ];
 
 const defaultLights = [
-  { kind: 'spot', x: 3, y: 4, z: 4, intensity: 430, spread: 0.34, width: 3, height: 3, elevation: -35, azimuth: -135, color: '#ffffff' },
-  { kind: 'area', x: -3, y: 2, z: 3.2, intensity: 360, spread: 0.55, width: 3.4, height: 2.8, elevation: -28, azimuth: 135, color: '#eef4ff' },
-  { kind: 'spot', x: 0, y: -5, z: 3, intensity: 180, spread: 0.42, width: 2.4, height: 2.4, elevation: -18, azimuth: 0, color: '#ffffff' },
+  { kind: 'spot', x: 3, y: 4, z: 4, intensity: 430, spread: 0.34, width: 3, height: 3, elevation: -35, azimuth: -135, color: BASIC_TRAINING_LIGHT_COLOR },
+  { kind: 'area', x: -3, y: 2, z: 3.2, intensity: 360, spread: 0.55, width: 3.4, height: 2.8, elevation: -28, azimuth: 135, color: BASIC_TRAINING_LIGHT_COLOR },
+  { kind: 'spot', x: 0, y: -5, z: 3, intensity: 180, spread: 0.42, width: 2.4, height: 2.4, elevation: -18, azimuth: 0, color: BASIC_TRAINING_LIGHT_COLOR },
 ];
 
 const state = {
   phase: 'setup',
-  taskId: 'flat',
+  taskId: 'uniform_visibility',
   modelId: 'abstract',
   assist: { hint: true, feedback: true },
   activeLight: 0,
@@ -370,13 +379,13 @@ function renderSetup() {
       <section class="setup-card">
         <div class="setup-main">
           <h1 class="app-title">\u304a\u984c</h1>
-          <p class="app-subtitle">\u307e\u305a\u306f\u76ee\u6307\u3059\u5370\u8c61\u3092\u9078\u3073\u307e\u3059\u3002\u8a73\u7d30\u306f\u30ab\u30fc\u30c9\u306b\u30ab\u30fc\u30bd\u30eb\u3092\u91cd\u306d\u308b\u3068\u8868\u793a\u3055\u308c\u307e\u3059\u3002</p>
+          <p class="app-subtitle">\u307e\u305a\u306f\u7df4\u7fd2\u3059\u308b\u7167\u660e\u306e\u76ee\u6a19\u3092\u9078\u3073\u307e\u3059\u3002\u57fa\u790e\u8ab2\u984c\u3067\u306f\u8272\u3067\u5370\u8c61\u3092\u4f5c\u3089\u305a\u3001\u914d\u7f6e\u30fb\u5411\u304d\u30fb\u30e9\u30a4\u30c8\u5f37\u5ea6\u3092\u5b66\u3073\u307e\u3059\u3002</p>
           <div class="task-list">
             ${tasks.map((task) => `
               <button type="button" class="task-choice ${task.id === state.taskId ? 'is-selected' : ''}" data-task="${task.id}">
                 <span class="task-dot"></span>
-                <span class="task-name">${task.title}</span>
-                <span class="task-detail">${task.detail}</span>
+                <span class="task-name">${task.label}</span>
+                <span class="task-detail">${task.description}<br><strong>\u4eca\u56de\u306e\u30dd\u30a4\u30f3\u30c8:</strong> ${task.learningPoints.join('\u30fb')}</span>
               </button>
             `).join('')}
           </div>
@@ -404,7 +413,7 @@ function renderSetup() {
 
   app.querySelectorAll('.task-choice').forEach((button) => {
     button.addEventListener('click', () => {
-      state.taskId = button.dataset.task;
+      state.taskId = normalizeTaskId(button.dataset.task);
       renderSetup();
     });
   });
@@ -427,11 +436,14 @@ function renderSetup() {
 function renderOperation() {
   const task = currentTask();
   const light = state.lights[state.activeLight];
-  const hints = state.assist.hint ? task.hint(state).filter(Boolean).slice(0, 3) : ['\u73fe\u5728\u306e\u8a2d\u5b9a\u3067\u306f\u30d2\u30f3\u30c8\u3092\u8868\u793a\u3057\u307e\u305b\u3093\u3002'];
+  const hints = showHint(task, state);
   app.innerHTML = `
     <main class="screen operation-screen">
       <header class="toolbar">
-        <div class="topic">[\u984c\uff1a${task.title}]</div>
+        <div class="topic">
+          <strong>[\u984c\uff1a${task.label}]</strong>
+          <span>${task.description}</span>
+        </div>
         <div class="toolbar-actions">
           <button type="button" class="secondary-btn" id="save">\u4fdd\u5b58</button>
           <button type="button" class="secondary-btn" id="render">\u30ec\u30f3\u30c0\u30ea\u30f3\u30b0</button>
@@ -477,17 +489,24 @@ function renderOperation() {
               ${slider('x', 'x', -10, 10, 0.1)}
               ${slider('y', 'y', -10, 10, 0.1)}
               ${slider('z', 'z', -2, 10, 0.1)}
-              ${slider('intensity', '\u7167\u5ea6', 0, 1000, 10)}
+              ${slider('intensity', '\u30e9\u30a4\u30c8\u5f37\u5ea6', 0, 1000, 10)}
               ${light.kind === 'spot' ? slider('spread', '\u62e1\u6563\u7387', 0.08, 0.9, 0.01) : ''}
               ${light.kind === 'area' ? slider('width', '\u6a2a\u5e45', 0.5, 8, 0.1) + slider('height', '\u7e26\u5e45', 0.5, 8, 0.1) : ''}
               ${slider('elevation', '\u4ef0\u4fef\u89d2', -80, 80, 1)}
               ${slider('azimuth', '\u65b9\u4f4d\u89d2', -180, 180, 1)}
             </div>
           </div>
-          <label class="color-row">
-            <span>\u30e9\u30a4\u30c8\u8272</span>
-            <input type="color" id="color" value="${light.color}" />
-          </label>
+          ${allowLightColorEditing ? `
+            <label class="color-row">
+              <span>\u30e9\u30a4\u30c8\u8272</span>
+              <input type="color" id="color" value="${light.color}" />
+            </label>
+          ` : `
+            <div class="color-row is-locked">
+              <span>\u30e9\u30a4\u30c8\u8272</span>
+              <strong>\u57fa\u790e\u8ab2\u984c\u3067\u306f\u767d\u8272\u306b\u56fa\u5b9a</strong>
+            </div>
+          `}
           <div class="submit-wrap">
             <button type="button" class="primary-btn" id="submit">\u63d0\u51fa</button>
           </div>
@@ -506,23 +525,18 @@ function renderFeedback() {
       <section class="feedback-card">
         <div class="feedback-head feedback-drag-handle">
           <div>
-            <h1 class="feedback-title">\u304a\u984c\uff1a${task.title}</h1>
-            <p class="muted">\u5168\u304a\u984c\u306e\u8a55\u4fa1\u3092\u78ba\u8a8d\u3057\u3001\u6210\u529f\u3059\u308b\u307e\u3067\u30ea\u30c8\u30e9\u30a4\u3067\u304d\u307e\u3059\u3002</p>
+            <h1 class="feedback-title">\u304a\u984c\uff1a${task.label}</h1>
+            <p class="muted">${task.description}</p>
           </div>
           <button type="button" class="ghost-btn" id="new-task">\u304a\u984c\u9078\u629e\u3078</button>
         </div>
         <div class="feedback-body">
           <div class="score-panel">
-            <div class="score-line">
-              <span class="score-state">${result.pass ? 'PASS' : 'RETRY'}</span>
-              <strong>${result.current}<span>/100\u70b9</span></strong>
-            </div>
-            <p class="pass-line">\u5408\u683c\u30e9\u30a4\u30f3: ${PASS_SCORE}/100\u70b9\u4ee5\u4e0a</p>
-            <p class="critique">${result.critique}</p>
+            ${showScoreResult(result)}
+            ${showPerformanceCritique(result)}
+            ${showReflectionQuestion(result)}
           </div>
-          <div class="score-bars-panel">
-            ${scoreBars(result.allScores, state.taskId)}
-          </div>
+          ${supportCondition.showScoreAfterDecision ? `<div class="score-bars-panel">${scoreBars(result.allScores, state.taskId)}</div>` : ''}
         </div>
         <div class="feedback-actions">
           <button type="button" class="secondary-btn" id="retry">\u30ea\u30c8\u30e9\u30a4</button>
@@ -647,11 +661,14 @@ function bindOperation() {
       renderOperation();
     });
   });
-  app.querySelector('#color').addEventListener('input', (event) => {
-    updateLight('color', event.target.value);
-    const colorInput = app.querySelector('#color');
-    if (colorInput) colorInput.value = event.target.value;
-  });
+  const colorInput = app.querySelector('#color');
+  if (colorInput) {
+    colorInput.addEventListener('input', (event) => {
+      updateLight('color', event.target.value);
+      const currentColorInput = app.querySelector('#color');
+      if (currentColorInput) currentColorInput.value = event.target.value;
+    });
+  }
   app.querySelector('#zoom').addEventListener('input', (event) => {
     state.camera.radius = Number(event.target.value);
     scene.updateCamera(state.camera);
@@ -723,7 +740,8 @@ function bindMapDrag() {
 function startTask() {
   state.phase = 'operation';
   state.activeLight = 0;
-  state.lights = clone(defaultLights);
+  state.taskId = normalizeTaskId(state.taskId);
+  state.lights = normalizeBasicLightColors(clone(defaultLights));
   state.history = [];
   state.startedAt = performance.now();
   scene.buildLights();
@@ -732,15 +750,16 @@ function startTask() {
 }
 
 function submit() {
+  const task = currentTask();
   const allScores = scoreAllTasks(state);
   const current = allScores.find((score) => score.id === state.taskId).score;
   state.result = {
     current,
     pass: current >= PASS_SCORE,
     allScores,
-    critique: state.assist.feedback
-      ? buildCritique(current)
-      : '\u8a55\u4fa1\u30b9\u30b3\u30a2\u3068\u5168\u304a\u984c\u306e\u30d0\u30e9\u30f3\u30b9\u306e\u307f\u3092\u8868\u793a\u3057\u3066\u3044\u307e\u3059\u3002\u6279\u8a55\u306f\u652f\u63f4\u8a2d\u5b9a\u3067\u30aa\u30d5\u3067\u3059\u3002',
+    critique: task.critique(current, state),
+    reflectionQuestion: task.reflectionQuestion,
+    provisionalNote: task.provisionalEvaluation,
   };
   state.phase = 'feedback';
   render();
@@ -792,7 +811,11 @@ function applyFeedbackPosition() {
 }
 
 function updateLight(param, value) {
+  if (param === 'color' && !allowLightColorEditing) return;
   state.lights[state.activeLight][param] = value;
+  if (trainingMode === 'basic') {
+    state.lights[state.activeLight].color = BASIC_TRAINING_LIGHT_COLOR;
+  }
   logChange(param, value);
   scene.updateLights(state.lights);
 }
@@ -815,18 +838,182 @@ function setView(view) {
   scene.updateCamera(state.camera);
 }
 
+function showHint(task, snapshot) {
+  if (!state.assist.hint || !supportCondition.showHintsDuringOperation) {
+    return ['\u73fe\u5728\u306e\u8a2d\u5b9a\u3067\u306f\u64cd\u4f5c\u4e2d\u306e\u30d2\u30f3\u30c8\u3092\u8868\u793a\u3057\u307e\u305b\u3093\u3002'];
+  }
+  return task.hint(snapshot).filter(Boolean).slice(0, 3);
+}
+
+function showScoreResult(result) {
+  const scoreMarkup = supportCondition.showScoreAfterDecision
+    ? `<strong>${result.current}<span>/100\u70b9</span></strong>`
+    : '<strong>--<span>/100\u70b9</span></strong>';
+  const passMarkup = supportCondition.showPassFailAfterDecision
+    ? `<span class="score-state">${result.pass ? 'PASS' : 'RETRY'}</span>`
+    : '<span class="score-state">\u8a55\u4fa1</span>';
+  return `
+    <div class="score-line">
+      ${passMarkup}
+      ${scoreMarkup}
+    </div>
+    <p class="pass-line">\u66ab\u5b9a\u5408\u683c\u30e9\u30a4\u30f3: ${PASS_SCORE}/100\u70b9\u4ee5\u4e0a</p>
+    <p class="provisional-note">${result.provisionalNote}</p>
+  `;
+}
+
+function showPerformanceCritique(result) {
+  if (!state.assist.feedback || !supportCondition.showCritiqueAfterDecision) return '';
+  return `<section class="critique-block"><h2>\u30d5\u30a3\u30fc\u30c9\u30d0\u30c3\u30af</h2><p class="critique">${result.critique}</p></section>`;
+}
+
+function showReflectionQuestion(result) {
+  if (!supportCondition.showReflectionQuestionAfterDecision) return '';
+  return `<section class="reflection-block"><h2>\u5185\u7701\u306e\u554f\u3044</h2><p>${result.reflectionQuestion}</p></section>`;
+}
+
 function scoreAllTasks(snapshot) {
   return tasks.map((task) => {
+    // These rules are provisional bridges from the previous parameter-based evaluator.
+    // Replace per-task rules with surface illuminance / visibility metrics as they become available.
     const score = Math.round(task.rules.reduce((sum, rule) => sum + rule(snapshot), 0) / task.rules.length);
-    return { id: task.id, title: task.title, score: clamp(score, 0, 100) };
+    return { id: task.id, title: task.label, score: clamp(score, 0, 100) };
   });
 }
 
-function buildCritique(score) {
-  if (score >= PASS_SCORE) {
-    return '\u4e3b\u8981\u306a\u7269\u7406\u6761\u4ef6\u306f\u76ee\u6a19\u306b\u8fd1\u304f\u3001\u304a\u984c\u306e\u5370\u8c61\u306f\u6210\u7acb\u3057\u3066\u3044\u307e\u3059\u3002\u6b21\u306f\u8996\u7dda\u304c\u96c6\u307e\u308b\u5834\u6240\u3092\u3088\u308a\u660e\u78ba\u306b\u3057\u3066\u304f\u3060\u3055\u3044\u3002';
+function scoreUniformVisibility(snapshot) {
+  const metrics = getSurfaceIlluminanceSummary(snapshot);
+  if (metrics) {
+    const uniformity = metrics.maxIlluminance > 0 ? metrics.minIlluminance / metrics.maxIlluminance : 0;
+    const averageScore = clamp(metrics.averageIlluminance / 500 * 100, 0, 100);
+    return clamp(uniformity * 70 + averageScore * 0.3, 0, 100);
   }
-  return '\u73fe\u5728\u306e\u5149\u306f\u304a\u984c\u306e\u6838\u3068\u306a\u308b\u7279\u5fb4\u304c\u307e\u3060\u5f31\u3044\u72b6\u614b\u3067\u3059\u3002\u5149\u306e\u5411\u304d\u3001\u786c\u3055\u3001\u9762\u7a4d\u3001\u7167\u5ea6\u306e\u3069\u308c\u3092\u512a\u5148\u3057\u3066\u5909\u3048\u308b\u304b\u3092\u4e00\u3064\u306b\u7d5e\u308b\u3068\u3001\u8ff7\u3044\u304c\u6e1b\u308a\u307e\u3059\u3002';
+  return clamp(
+    balanceScore(snapshot, 'intensity', 420, 180) * 0.55
+      + Math.max(0, 100 - Math.abs(snapshot.lights[0].x - 3) * 12 - Math.abs(snapshot.lights[0].y - 3) * 12) * 0.25
+      + Math.max(0, 100 - Math.abs(snapshot.lights[0].elevation + 35) * 1.2) * 0.2,
+    0,
+    100,
+  );
+}
+
+function scoreShapeEmphasis(snapshot) {
+  return clamp(
+    maxKindScore(snapshot, 'spot', 'intensity', 820, 260) * 0.4
+      + (100 - Math.min(100, minKindValue(snapshot, 'spot', 'spread') * 130)) * 0.3
+      + Math.max(0, 100 - averageKindValue(snapshot, 'area', 'intensity') * 0.12) * 0.3,
+    0,
+    100,
+  );
+}
+
+function scoreSoftLighting(snapshot) {
+  return clamp(
+    maxKindScore(snapshot, 'area', 'intensity', 720, 260) * 0.35
+      + Math.max(...snapshot.lights.filter((l) => l.kind === 'area').map((l) => clamp((l.width * l.height) / 32 * 100, 0, 100)), 0) * 0.45
+      + Math.max(0, 100 - averageKindValue(snapshot, 'spot', 'intensity') * 0.1) * 0.2,
+    0,
+    100,
+  );
+}
+
+function scoreBackgroundSeparation(snapshot) {
+  return clamp(
+    Math.max(...snapshot.lights.map((l) => l.y < -5 ? 100 : Math.max(0, 100 - (l.y + 5) * 15))) * 0.45
+      + Math.max(0, 100 - averageIntensity(snapshot) * 0.08) * 0.25
+      + Math.max(...snapshot.lights.map((l) => Math.max(0, 100 - Math.abs(Math.abs(l.azimuth) - 180) * 0.5))) * 0.3,
+    0,
+    100,
+  );
+}
+
+function scoreVisualFocus(snapshot) {
+  const strongestSpot = maxKindScore(snapshot, 'spot', 'intensity', 760, 280);
+  const focusedSpread = 100 - Math.min(100, minKindValue(snapshot, 'spot', 'spread') * 145);
+  const backgroundDrop = Math.max(0, 100 - averageKindValue(snapshot, 'area', 'intensity') * 0.1);
+  return clamp(strongestSpot * 0.45 + focusedSpread * 0.35 + backgroundDrop * 0.2, 0, 100);
+}
+
+function getSurfaceIlluminanceSummary(snapshot) {
+  const metrics = snapshot.surfaceIlluminanceSummary || snapshot.illuminanceSummary;
+  if (!metrics) return null;
+  const averageIlluminance = Number(metrics.averageIlluminance ?? metrics.average ?? metrics.mean);
+  const minIlluminance = Number(metrics.minIlluminance ?? metrics.min);
+  const maxIlluminance = Number(metrics.maxIlluminance ?? metrics.max);
+  if ([averageIlluminance, minIlluminance, maxIlluminance].some((value) => Number.isNaN(value))) return null;
+  return { averageIlluminance, minIlluminance, maxIlluminance };
+}
+
+function hintUniformVisibility(snapshot) {
+  const intensities = snapshot.lights.map((light) => light.intensity);
+  const spread = Math.max(...intensities) - Math.min(...intensities);
+  return [
+    spread > 180 ? '\u30e9\u30a4\u30c8\u5f37\u5ea6\u306e\u5dee\u304c\u5927\u304d\u304f\u3001\u660e\u308b\u3044\u90e8\u5206\u3068\u6697\u3044\u90e8\u5206\u306e\u30e0\u30e9\u304c\u51fa\u3084\u3059\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
+    snapshot.lights.some((light) => light.z < 2) ? '\u4f4e\u3044\u4f4d\u7f6e\u306e\u5149\u304c\u3042\u308a\u3001\u5c40\u6240\u7684\u306a\u5f71\u304c\u51fa\u3084\u3059\u304f\u306a\u3063\u3066\u3044\u307e\u3059\u3002' : '',
+    '\u4f5c\u54c1\u5168\u4f53\u306b\u76ee\u3092\u79fb\u3057\u3001\u6975\u7aef\u306b\u6697\u3044\u9762\u304c\u6b8b\u3063\u3066\u3044\u306a\u3044\u304b\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+  ];
+}
+
+function hintShapeEmphasis(snapshot) {
+  return [
+    Math.abs(snapshot.lights[0].x) < 1 && Math.abs(snapshot.lights[0].y) < 1 ? '\u4e3b\u306a\u5149\u304c\u6b63\u9762\u5bc4\u308a\u3067\u3001\u5f62\u306e\u51f9\u51f8\u304c\u5e73\u3089\u306b\u898b\u3048\u3084\u3059\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
+    averageKindValue(snapshot, 'area', 'intensity') > averageKindValue(snapshot, 'spot', 'intensity') ? '\u9762\u5149\u6e90\u304c\u5f37\u304f\u3001\u660e\u6697\u5dee\u304c\u8584\u308c\u3066\u3044\u307e\u3059\u3002' : '',
+    '\u660e\u308b\u3044\u9762\u3068\u6697\u3044\u9762\u304c\u3069\u3061\u3089\u3082\u8aad\u3081\u308b\u304b\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+  ];
+}
+
+function hintSoftLighting(snapshot) {
+  return [
+    minKindValue(snapshot, 'spot', 'spread') < 0.22 ? '\u30b9\u30dd\u30c3\u30c8\u306e\u62e1\u6563\u7387\u304c\u5c0f\u3055\u304f\u3001\u5f71\u306e\u5883\u754c\u304c\u5f37\u304f\u51fa\u3084\u3059\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
+    Math.max(...snapshot.lights.filter((l) => l.kind === 'area').map((l) => l.width * l.height), 0) < 10 ? '\u9762\u5149\u6e90\u306e\u9762\u7a4d\u304c\u5c0f\u3055\u304f\u3001\u5149\u304c\u56de\u308a\u8fbc\u307f\u306b\u304f\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
+    '\u5f71\u306e\u7aef\u304c\u3069\u308c\u304f\u3089\u3044\u306f\u3063\u304d\u308a\u3057\u3066\u3044\u308b\u304b\u898b\u3066\u304f\u3060\u3055\u3044\u3002',
+  ];
+}
+
+function hintBackgroundSeparation(snapshot) {
+  return [
+    snapshot.lights.every((light) => light.y > -2) ? '\u80cc\u9762\u5074\u304b\u3089\u306e\u5149\u304c\u5c11\u306a\u304f\u3001\u8f2a\u90ed\u304c\u80cc\u666f\u306b\u57cb\u3082\u308c\u3084\u3059\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
+    averageKindValue(snapshot, 'spot', 'intensity') + averageKindValue(snapshot, 'area', 'intensity') > 900 ? '\u6b63\u9762\u3084\u5468\u56f2\u304c\u660e\u308b\u304f\u3001\u8f2a\u90ed\u5149\u306e\u5dee\u304c\u8aad\u307f\u306b\u304f\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
+    '\u4f5c\u54c1\u306e\u5916\u5074\u306e\u7dda\u304c\u80cc\u666f\u3068\u5206\u304b\u308c\u3066\u898b\u3048\u308b\u304b\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+  ];
+}
+
+function hintVisualFocus(snapshot) {
+  return [
+    maxKindScore(snapshot, 'spot', 'intensity', 760, 280) < 45 ? '\u5c40\u6240\u7684\u306b\u76ee\u3092\u5f15\u304f\u5149\u304c\u307e\u3060\u5f31\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
+    minKindValue(snapshot, 'spot', 'spread') > 0.55 ? '\u30b9\u30dd\u30c3\u30c8\u306e\u5149\u304c\u5e83\u304c\u308a\u3001\u8996\u7dda\u304c\u4e00\u70b9\u306b\u96c6\u307e\u308a\u306b\u304f\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
+    '\u4e00\u756a\u898b\u305b\u305f\u3044\u5834\u6240\u3068\u80cc\u666f\u306e\u660e\u308b\u3055\u306e\u5dee\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+  ];
+}
+
+function critiqueUniformVisibility(score) {
+  return score >= PASS_SCORE
+    ? '\u5168\u4f53\u306e\u660e\u308b\u3055\u30d0\u30e9\u30f3\u30b9\u306f\u6bd4\u8f03\u7684\u6574\u3063\u3066\u3044\u307e\u3059\u3002\u6b21\u306f\u6697\u3044\u9762\u304c\u6b8b\u308b\u5834\u6240\u3092\u3055\u3089\u306b\u89b3\u5bdf\u3057\u3066\u304f\u3060\u3055\u3044\u3002'
+    : '\u660e\u308b\u3055\u306e\u504f\u308a\u304c\u307e\u3060\u5f37\u3044\u72b6\u614b\u3067\u3059\u3002\u30e9\u30a4\u30c8\u5f37\u5ea6\u3068\u914d\u7f6e\u306e\u30d0\u30e9\u30f3\u30b9\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002';
+}
+
+function critiqueShapeEmphasis(score) {
+  return score >= PASS_SCORE
+    ? '\u5149\u306e\u5165\u308a\u65b9\u306b\u5dee\u304c\u3042\u308a\u3001\u5f62\u306e\u8d77\u4f0f\u304c\u8aad\u307f\u3084\u3059\u3044\u72b6\u614b\u3067\u3059\u3002'
+    : '\u660e\u6697\u306e\u5dee\u3084\u5149\u306e\u65b9\u5411\u304c\u307e\u3060\u5f31\u304f\u3001\u4f5c\u54c1\u304c\u5e73\u3089\u306b\u898b\u3048\u3084\u3059\u3044\u72b6\u614b\u3067\u3059\u3002';
+}
+
+function critiqueSoftLighting(score) {
+  return score >= PASS_SCORE
+    ? '\u5f71\u306e\u5f37\u3055\u304c\u6291\u3048\u3089\u308c\u3001\u843d\u3061\u7740\u3044\u305f\u5149\u306b\u8fd1\u3065\u3044\u3066\u3044\u307e\u3059\u3002'
+    : '\u5149\u6e90\u9762\u7a4d\u3084\u30b9\u30dd\u30c3\u30c8\u306e\u786c\u3055\u306e\u5f71\u97ff\u3067\u3001\u5f71\u304c\u307e\u3060\u5f37\u304f\u51fa\u3084\u3059\u3044\u72b6\u614b\u3067\u3059\u3002';
+}
+
+function critiqueBackgroundSeparation(score) {
+  return score >= PASS_SCORE
+    ? '\u80cc\u666f\u3068\u4f5c\u54c1\u306e\u5206\u96e2\u304c\u51fa\u3066\u304a\u308a\u3001\u5916\u5074\u306e\u5f62\u304c\u8aad\u307f\u3084\u3059\u3044\u72b6\u614b\u3067\u3059\u3002'
+    : '\u4f5c\u54c1\u306e\u8f2a\u90ed\u3068\u80cc\u666f\u306e\u5dee\u304c\u307e\u3060\u5f31\u3044\u72b6\u614b\u3067\u3059\u3002\u80cc\u9762\u5074\u306e\u5149\u3068\u6b63\u9762\u5149\u306e\u6bd4\u7387\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002';
+}
+
+function critiqueVisualFocus(score) {
+  return score >= PASS_SCORE
+    ? '\u898b\u305b\u305f\u3044\u5834\u6240\u306b\u660e\u308b\u3055\u306e\u5dee\u304c\u751f\u307e\u308c\u3001\u8996\u7dda\u304c\u5411\u304b\u3044\u3084\u3059\u3044\u72b6\u614b\u3067\u3059\u3002'
+    : '\u660e\u308b\u3055\u306e\u5dee\u304c\u5e83\u304f\u5206\u6563\u3057\u3001\u8996\u7dda\u3092\u96c6\u3081\u305f\u3044\u5834\u6240\u304c\u307e\u3060\u5f31\u3044\u72b6\u614b\u3067\u3059\u3002';
 }
 
 function scoreBars(scores, currentId) {
@@ -851,7 +1038,17 @@ function scoreBars(scores, currentId) {
 }
 
 function currentTask() {
+  state.taskId = normalizeTaskId(state.taskId);
   return tasks.find((task) => task.id === state.taskId) || tasks[0];
+}
+
+function normalizeTaskId(taskId) {
+  return legacyTaskIdMap[taskId] || taskId || tasks[0].id;
+}
+
+function normalizeBasicLightColors(lights) {
+  if (trainingMode !== 'basic') return lights;
+  return lights.map((light) => ({ ...light, color: BASIC_TRAINING_LIGHT_COLOR }));
 }
 
 function isLightKindMismatch(entry, data) {
@@ -987,5 +1184,9 @@ if (typeof window !== 'undefined') {
     submit,
     scoreAllTasks,
     isLightKindMismatch,
+    supportCondition,
+    legacyTaskIdMap,
+    allowLightColorEditing,
+    BASIC_TRAINING_LIGHT_COLOR,
   };
 }
