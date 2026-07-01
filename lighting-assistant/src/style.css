@@ -152,9 +152,22 @@ button {
 }
 
 .task-name {
-  font-size: 23px;
+  grid-column: 2;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: 0;
+  line-height: 1.45;
+}
+
+.task-badge {
+  grid-column: 2;
+  width: max-content;
+  padding: 3px 8px;
+  color: #111317;
+  background: rgba(236, 255, 114, 0.9);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .task-detail strong {
@@ -347,6 +360,18 @@ button {
   line-height: 1.45;
 }
 
+.attention-note {
+  width: max-content;
+  max-width: 100%;
+  padding: 3px 8px;
+  color: #111317;
+  background: var(--accent);
+  border-radius: 999px;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
 .toolbar-actions {
   display: flex;
   gap: 10px;
@@ -489,6 +514,37 @@ button {
 
 .type-tabs {
   margin: 14px 16px 0;
+}
+
+.light-state-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 16px 0;
+}
+
+.check-row,
+.tool-btn {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 10px;
+  color: #d8dde8;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.check-row input {
+  accent-color: var(--accent);
+}
+
+.tool-btn {
+  grid-column: 1 / -1;
 }
 
 .map-and-values {
@@ -636,8 +692,10 @@ button {
 }
 
 .score-state {
-  font-size: 34px;
+  max-width: 180px;
+  font-size: 20px;
   font-weight: 700;
+  line-height: 1.3;
 }
 
 .pass-line {
@@ -660,6 +718,42 @@ button {
   line-height: 1.6;
 }
 
+.score-note {
+  margin: 0 0 12px;
+  color: #d8dde8;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.metric-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.metric-list div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+}
+
+.metric-list dt,
+.metric-list dd {
+  margin: 0;
+  font-size: 12px;
+}
+
+.metric-list dd {
+  color: var(--accent);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
 .critique-block,
 .reflection-block {
   margin-top: 18px;
@@ -671,6 +765,22 @@ button {
 .reflection-block h2 {
   margin: 0 0 8px;
   font-size: 15px;
+}
+
+.critique-block h3 {
+  margin: 14px 0 6px;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.feedback-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: #f1f5f9;
+  font-size: 13px;
+  line-height: 1.7;
 }
 
 .reflection-block p {
