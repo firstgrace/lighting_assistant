@@ -10,6 +10,23 @@ const STAGE_MATERIALS = {
   wall: 0x383b42,
   plinth: 0x4b4f58,
 };
+const PROVISIONAL_VISIBILITY_THRESHOLDS = {
+  averagePreferredMin: 55,
+  averagePreferredMax: 180,
+  minimumPreferred: 28,
+  maximumAllowed: 360,
+  uniformityPreferred: 0.42,
+};
+const EMPTY_ILLUMINANCE_SUMMARY = Object.freeze({
+  averageIlluminance: null,
+  minIlluminance: null,
+  maxIlluminance: null,
+  percentile10Illuminance: null,
+  uniformity: null,
+  validSampleCount: 0,
+  totalSampleCount: 0,
+});
+const SURFACE_SAMPLE_OFFSET = 0.035;
 const trainingMode = 'basic';
 const allowLightColorEditing = trainingMode !== 'basic';
 
@@ -167,6 +184,10 @@ const state = {
   startedAt: 0,
   startedAtIso: '',
   sessionStats: createSessionStats(),
+  showSurfaceSamples: false,
+  surfaceIlluminanceSamples: [],
+  surfaceIlluminanceSummary: clone(EMPTY_ILLUMINANCE_SUMMARY),
+  uniformVisibilityEvaluation: null,
   camera: { theta: -38, phi: 54, radius: 9.2, view: 'free' },
   feedbackPosition: { x: 0, y: 0 },
   result: null,
@@ -191,11 +212,14 @@ class LightingScene {
     this.lightObjects = [];
     this.markers = [];
     this.modelGroup = new THREE.Group();
+    this.surfaceSampleGroup = new THREE.Group();
 
     this.buildStage();
     this.setModel(state.modelId);
     this.buildLights();
+    this.scene.add(this.surfaceSampleGroup);
     this.updateCamera(state.camera);
+    this.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
     this.resize();
     window.addEventListener('resize', () => this.resize());
     this.animate();
@@ -330,6 +354,28 @@ class LightingScene {
     });
   }
 
+  updateSurfaceSamples(samples, visible) {
+    if (!this.surfaceSampleGroup) return;
+    this.surfaceSampleGroup.clear();
+    this.surfaceSampleGroup.visible = visible;
+    if (!visible || !samples?.length) return;
+    const geometry = new THREE.SphereGeometry(0.035, 8, 8);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x37d5c5,
+      transparent: true,
+      opacity: 0.86,
+      depthWrite: false,
+    });
+    samples.forEach((sample) => {
+      if (!sample.valid) return;
+      const p = offsetSamplePosition(sample);
+      const dot = new THREE.Mesh(geometry, material);
+      dot.position.set(p.x, p.z, p.y);
+      dot.userData.ignoreForEvaluation = true;
+      this.surfaceSampleGroup.add(dot);
+    });
+  }
+
   updateCamera(cameraState) {
     const r = cameraState.radius;
     if (cameraState.view === 'top') {
@@ -381,6 +427,7 @@ async function initScene() {
     scene.setModel(state.modelId);
     scene.updateLights(state.lights);
     scene.updateCamera(state.camera);
+    scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
   } catch (error) {
     console.error('Failed to initialize 3D scene. UI will continue with the 2D controls.', error);
     drawFallbackCanvas();
@@ -393,6 +440,7 @@ function createFallbackScene() {
     setModel: drawFallbackCanvas,
     updateCamera: drawFallbackCanvas,
     updateLights: drawFallbackCanvas,
+    updateSurfaceSamples: () => {},
   };
 }
 
@@ -485,7 +533,9 @@ function renderSetup() {
   app.querySelectorAll('.model-btn').forEach((button) => {
     button.addEventListener('click', () => {
       state.modelId = button.dataset.model;
+      updateDerivedIlluminance();
       scene.setModel(state.modelId);
+      scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
       renderSetup();
     });
   });
@@ -558,6 +608,10 @@ function renderOperation() {
               <input id="helper-visible" type="checkbox" ${light.showHelper === false ? '' : 'checked'} />
               <span>\u64cd\u4f5c\u30ac\u30a4\u30c9\u3092\u8868\u793a</span>
             </label>
+            <label class="check-row">
+              <input id="surface-samples-visible" type="checkbox" ${state.showSurfaceSamples ? 'checked' : ''} />
+              <span>\u8868\u9762\u6e2c\u5b9a\u70b9\u3092\u8868\u793a</span>
+            </label>
             <button type="button" class="tool-btn" id="reset-lights">\u521d\u671f\u72b6\u614b\u306b\u623b\u3059</button>
           </div>
           <div class="map-and-values">
@@ -598,7 +652,7 @@ function renderFeedback() {
   const task = currentTask();
   const result = state.result;
   app.innerHTML = `
-    <main class="screen feedback-screen">
+    <main class="screen feedback-screen is-scrollable">
       <section class="feedback-card">
         <div class="feedback-head feedback-drag-handle">
           <div>
@@ -732,6 +786,11 @@ function bindOperation() {
     updateLight('showHelper', event.target.checked);
     renderOperation();
   });
+  app.querySelector('#surface-samples-visible').addEventListener('change', (event) => {
+    state.showSurfaceSamples = event.target.checked;
+    scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
+    renderOperation();
+  });
   app.querySelector('#reset-lights').addEventListener('click', resetLights);
   app.querySelectorAll('input[type="range"][data-param]').forEach((input) => {
     input.addEventListener('input', (event) => {
@@ -832,8 +891,10 @@ function startTask() {
   state.startedAt = performance.now();
   state.startedAtIso = new Date().toISOString();
   state.sessionStats = createSessionStats();
+  updateDerivedIlluminance();
   scene.buildLights();
   scene.updateLights(state.lights);
+  scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
   renderOperation();
 }
 
@@ -842,13 +903,16 @@ function resetLights() {
   state.activeLight = 0;
   state.sessionStats.resetCount += 1;
   logChange('reset', 'initial-lights');
+  updateDerivedIlluminance();
   scene.buildLights();
   scene.updateLights(state.lights);
+  scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
   renderOperation();
 }
 
 function submit() {
   const task = currentTask();
+  updateDerivedIlluminance();
   const allScores = scoreAllTasks(state);
   const currentScore = allScores.find((score) => score.id === state.taskId);
   const current = task.scoreEnabled === false ? null : currentScore?.score ?? 0;
@@ -868,6 +932,8 @@ function submit() {
     param: 'decision',
     value: current,
     supportCondition: clone(supportCondition),
+    evaluationSource: feedbackInput.evaluationSource,
+    illuminanceSummary: clone(feedbackInput.illuminanceSummary),
     actionSummary: clone(state.sessionStats),
     internalEvaluationValues: feedbackInput.metrics,
     lights: clone(state.lights),
@@ -928,7 +994,9 @@ function updateLight(param, value) {
     state.lights[state.activeLight].color = BASIC_TRAINING_LIGHT_COLOR;
   }
   logChange(param, value);
+  updateDerivedIlluminance();
   scene.updateLights(state.lights);
+  scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
 }
 
 function logChange(param, value) {
@@ -1015,18 +1083,44 @@ function scoreAllTasks(snapshot) {
   return tasks.filter((task) => task.scoreEnabled !== false).map((task) => {
     // These rules are provisional bridges from the previous parameter-based evaluator.
     // Replace per-task rules with surface illuminance / visibility metrics as they become available.
-    const score = Math.round(task.rules.reduce((sum, rule) => sum + rule(snapshot), 0) / task.rules.length);
-    return { id: task.id, title: task.shortLabel || task.label, score: clamp(score, 0, 100), internalEvaluationName: task.internalEvaluationName };
+    const evaluation = evaluateTask(task, snapshot);
+    return {
+      id: task.id,
+      title: task.shortLabel || task.label,
+      score: evaluation.score,
+      internalEvaluationName: task.internalEvaluationName,
+      evaluationSource: evaluation.evaluationSource,
+      illuminanceSummary: evaluation.illuminanceSummary,
+      visibilityBreakdown: evaluation.visibilityBreakdown,
+    };
   });
 }
 
+function evaluateTask(task, snapshot) {
+  if (task.id === 'uniform_visibility') {
+    const direct = evaluateUniformVisibilityFromIlluminance(snapshot);
+    if (direct) return direct;
+  }
+  const score = Math.round(task.rules.reduce((sum, rule) => sum + rule(snapshot), 0) / task.rules.length);
+  return {
+    score: clamp(score, 0, 100),
+    evaluationSource: 'legacy',
+    illuminanceSummary: getSurfaceIlluminanceSummary(snapshot) || clone(EMPTY_ILLUMINANCE_SUMMARY),
+    visibilityBreakdown: null,
+  };
+}
+
 function buildFeedbackInput(task, score, allScores, snapshot) {
-  const surface = getSurfaceIlluminanceSummary(snapshot);
+  const scoreEntry = allScores.find((item) => item.id === task.id);
+  const surface = scoreEntry?.illuminanceSummary || getSurfaceIlluminanceSummary(snapshot) || clone(EMPTY_ILLUMINANCE_SUMMARY);
+  const evaluationSource = task.id === 'uniform_visibility' ? scoreEntry?.evaluationSource || 'legacy' : 'legacy';
   const metrics = {
-    averageIlluminance: task.id === 'uniform_visibility' ? surface?.averageIlluminance ?? null : null,
-    minIlluminance: task.id === 'uniform_visibility' ? surface?.minIlluminance ?? null : null,
-    maxIlluminance: task.id === 'uniform_visibility' ? surface?.maxIlluminance ?? null : null,
-    uniformity: task.id === 'uniform_visibility' && surface?.maxIlluminance > 0 ? surface.minIlluminance / surface.maxIlluminance : null,
+    averageIlluminance: task.id === 'uniform_visibility' ? surface.averageIlluminance : null,
+    minIlluminance: task.id === 'uniform_visibility' ? surface.minIlluminance : null,
+    maxIlluminance: task.id === 'uniform_visibility' ? surface.maxIlluminance : null,
+    percentile10Illuminance: task.id === 'uniform_visibility' ? surface.percentile10Illuminance : null,
+    uniformity: task.id === 'uniform_visibility' ? surface.uniformity : null,
+    validSampleCount: task.id === 'uniform_visibility' ? surface.validSampleCount : null,
     highlightClippingRate: null,
     darkAreaRate: null,
     objectBackgroundContrast: null,
@@ -1036,6 +1130,9 @@ function buildFeedbackInput(task, score, allScores, snapshot) {
     taskTitle: task.label,
     score,
     metrics,
+    evaluationSource,
+    illuminanceSummary: clone(surface),
+    visibilityBreakdown: scoreEntry?.visibilityBreakdown || null,
     detectedIssues: [],
     positiveFeatures: [],
     actionSummary: clone(snapshot.sessionStats),
@@ -1051,6 +1148,10 @@ function buildRuleBasedFeedback(task, score, snapshot, feedbackInput) {
       nextObservation: '\u7269\u4f53\u306e\u8868\u9762\u306b\u5149\u304c\u5c4a\u3044\u3066\u3044\u308b\u9762\u3068\u3001\u5c4a\u3044\u3066\u3044\u306a\u3044\u9762\u306e\u9055\u3044\u3092\u898b\u6bd4\u3079\u3066\u304f\u3060\u3055\u3044\u3002',
       reflectionQuestion: task.reflectionQuestion,
     };
+  }
+
+  if (task.id === 'uniform_visibility' && feedbackInput.evaluationSource === 'direct_illuminance') {
+    return buildUniformVisibilityFeedback(task, score, feedbackInput);
   }
 
   const positiveFeatures = [];
@@ -1072,22 +1173,79 @@ function buildRuleBasedFeedback(task, score, snapshot, feedbackInput) {
   };
 }
 
+function buildUniformVisibilityFeedback(task, score, feedbackInput) {
+  const summary = feedbackInput.illuminanceSummary;
+  const thresholds = PROVISIONAL_VISIBILITY_THRESHOLDS;
+  const positiveFeatures = [];
+  const detectedIssues = [];
+
+  if (summary.averageIlluminance >= thresholds.averagePreferredMin && summary.averageIlluminance <= thresholds.averagePreferredMax) {
+    positiveFeatures.push('\u5e73\u5747\u7684\u306a\u660e\u308b\u3055\u304c\u66ab\u5b9a\u7684\u306a\u9069\u6b63\u7bc4\u56f2\u306b\u5165\u3063\u3066\u3044\u307e\u3059\u3002');
+  }
+  if (summary.validSampleCount > 0) {
+    positiveFeatures.push('\u7269\u4f53\u8868\u9762\u306e\u6e2c\u5b9a\u70b9\u3092\u4f7f\u3063\u3066\u3001\u8a2d\u5b9a\u5024\u3067\u306f\u306a\u304f\u8868\u9762\u306e\u898b\u3048\u65b9\u3092\u8a55\u4fa1\u3067\u304d\u3066\u3044\u307e\u3059\u3002');
+  }
+
+  if (summary.averageIlluminance < thresholds.averagePreferredMin) {
+    detectedIssues.push('\u76f4\u63a5\u5149\u306e\u76f8\u5bfe\u5024\u304c\u5168\u4f53\u7684\u306b\u4f4e\u3044\u6e2c\u5b9a\u7d50\u679c\u3067\u3059\u3002');
+  }
+  if (summary.averageIlluminance > thresholds.averagePreferredMax) {
+    detectedIssues.push('\u76f4\u63a5\u5149\u306e\u76f8\u5bfe\u5024\u304c\u5168\u4f53\u7684\u306b\u9ad8\u3044\u6e2c\u5b9a\u7d50\u679c\u3067\u3059\u3002');
+  }
+  if (summary.uniformity < thresholds.uniformityPreferred) {
+    detectedIssues.push('\u4e0b\u4f4d10%\u306e\u6e2c\u5b9a\u70b9\u3067\u3001\u76f4\u63a5\u5149\u304c\u307b\u3068\u3093\u3069\u5c4a\u3044\u3066\u3044\u306a\u3044\u70b9\u304c\u3042\u308a\u307e\u3059\u3002');
+  }
+  if (summary.maxIlluminance > thresholds.maximumAllowed) {
+    detectedIssues.push('\u4e00\u90e8\u306b\u5149\u304c\u96c6\u4e2d\u3057\u3059\u304e\u3066\u3044\u308b\u53ef\u80fd\u6027\u304c\u3042\u308a\u307e\u3059\u3002\u3053\u308c\u306f\u767d\u98db\u3073\u7387\u3067\u306f\u306a\u304f\u3001\u6700\u5927\u7167\u5ea6\u306b\u3088\u308b\u66ab\u5b9a\u6307\u6a19\u3067\u3059\u3002');
+  }
+  if (!detectedIssues.length) {
+    detectedIssues.push('\u76f4\u63a5\u7167\u5ea6\u306e\u66ab\u5b9a\u6307\u6a19\u3067\u306f\u5927\u304d\u306a\u504f\u308a\u306f\u5c11\u306a\u3044\u72b6\u614b\u3067\u3059\u3002');
+  }
+
+  return {
+    positiveFeatures,
+    detectedIssues,
+    nextObservation: score >= PASS_SCORE
+      ? '次は暗い面に形が残っているか、最も明るい面の情報が潰れていないか観察してください。'
+      : '下位10%の測定点と平均値の差が、表面の読みやすさにどう見えているか確認してください。',
+    reflectionQuestion: task.reflectionQuestion,
+  };
+}
+
 function metricList(feedbackInput) {
-  const entries = Object.entries(feedbackInput.metrics).filter(([, value]) => value !== null);
+  if (feedbackInput.taskId === 'uniform_visibility' && feedbackInput.evaluationSource !== 'direct_illuminance') {
+    return '<p class="score-note">\u76f4\u63a5\u7167\u5ea6\u30c7\u30fc\u30bf\uff1a\u672a\u53d6\u5f97</p>';
+  }
+  const entries = Object.entries(feedbackInput.metrics).filter(([key, value]) => (
+    ['averageIlluminance', 'minIlluminance', 'maxIlluminance', 'percentile10Illuminance', 'uniformity', 'validSampleCount'].includes(key)
+    && value !== null
+    && value !== undefined
+    && Number.isFinite(value)
+  ));
   if (!entries.length) {
-    return '<p class="score-note">\u672a\u5b9f\u88c5\u306e\u7269\u7406\u6307\u6a19\u306f\u8a55\u4fa1\u5024\u3068\u3057\u3066\u8868\u793a\u3057\u3066\u3044\u307e\u305b\u3093\u3002</p>';
+    return '<p class="score-note">\u76f4\u63a5\u7167\u5ea6\u30c7\u30fc\u30bf\uff1a\u672a\u53d6\u5f97</p>';
   }
   const labels = {
-    averageIlluminance: '\u5e73\u5747\u7167\u5ea6',
-    minIlluminance: '\u6700\u5c0f\u7167\u5ea6',
-    maxIlluminance: '\u6700\u5927\u7167\u5ea6',
-    uniformity: '\u5747\u6589\u5ea6',
+    averageIlluminance: '\u5e73\u5747\u7167\u5ea6\uff08\u76f8\u5bfe\u5024\uff09',
+    minIlluminance: '\u6700\u5c0f\u7167\u5ea6\uff08\u76f8\u5bfe\u5024\uff09',
+    maxIlluminance: '\u6700\u5927\u7167\u5ea6\uff08\u76f8\u5bfe\u5024\uff09',
+    percentile10Illuminance: '\u4e0b\u4f4d10%\u7167\u5ea6\uff08\u76f8\u5bfe\u5024\uff09',
+    uniformity: '\u66ab\u5b9a\u5747\u6589\u5ea6',
+    validSampleCount: '\u6e2c\u5b9a\u70b9',
   };
+  const total = feedbackInput.illuminanceSummary?.totalSampleCount ?? 0;
   return `
     <dl class="metric-list">
-      ${entries.map(([key, value]) => `<div><dt>${labels[key] || key}</dt><dd>${Number(value).toFixed(2)}</dd></div>`).join('')}
+      ${entries.map(([key, value]) => `<div><dt>${labels[key] || key}</dt><dd>${formatMetricValue(key, value, total)}</dd></div>`).join('')}
     </dl>
+    <p class="score-note">\u6700\u5927\u7167\u5ea6\u306b\u3088\u308b\u6e1b\u70b9\u306f\u3001\u767d\u98db\u3073\u7387\u306e\u753b\u50cf\u89e3\u6790\u3067\u306f\u306a\u3044\u66ab\u5b9a\u6307\u6a19\u3067\u3059\u3002</p>
   `;
+}
+
+function formatMetricValue(key, value, totalSampleCount) {
+  if (key === 'validSampleCount') return `${Math.round(value)} / ${Math.round(totalSampleCount)}`;
+  if (key === 'uniformity') return Number(value).toFixed(2);
+  return Number(value).toFixed(1);
 }
 
 function nextObservationForTask(task) {
@@ -1101,15 +1259,50 @@ function nextObservationForTask(task) {
   return table[task.id] || '\u5149\u304c\u7269\u4f53\u8868\u9762\u306b\u3069\u3046\u5c4a\u3044\u3066\u3044\u308b\u304b\u89b3\u5bdf\u3057\u3066\u304f\u3060\u3055\u3044\u3002';
 }
 
+function evaluateUniformVisibilityFromIlluminance(snapshot) {
+  const summary = getSurfaceIlluminanceSummary(snapshot);
+  if (!isUsableIlluminanceSummary(summary)) return null;
+  const parts = visibilityScoreParts(summary);
+  const directScore = clamp(
+    parts.averageIlluminanceScore * 0.35
+      + parts.lowPercentileIlluminanceScore * 0.25
+      + parts.uniformityScore * 0.3
+      - parts.excessiveIlluminancePenalty * 0.1,
+    0,
+    100,
+  );
+  if (!Number.isFinite(directScore)) return null;
+  const legacyScore = scoreUniformVisibilityLegacy(snapshot);
+  const score = clamp(legacyScore * 0.7 + directScore * 0.3, 0, 100);
+  if (!Number.isFinite(score)) return null;
+  return {
+    score: Math.round(score),
+    evaluationSource: 'direct_illuminance',
+    illuminanceSummary: summary,
+    visibilityBreakdown: { ...parts, directScore, legacyScore },
+  };
+}
+
+function visibilityScoreParts(summary) {
+  const t = PROVISIONAL_VISIBILITY_THRESHOLDS;
+  return {
+    averageIlluminanceScore: preferredRangeScore(summary.averageIlluminance, t.averagePreferredMin, t.averagePreferredMax),
+    lowPercentileIlluminanceScore: clamp(summary.percentile10Illuminance / t.minimumPreferred * 100, 0, 100),
+    uniformityScore: clamp(summary.uniformity / t.uniformityPreferred * 100, 0, 100),
+    // This is a provisional maximum-illuminance proxy, not image-based highlight clipping.
+    excessiveIlluminancePenalty: clamp((summary.maxIlluminance - t.maximumAllowed) / t.maximumAllowed * 100, 0, 100),
+  };
+}
+
 function scoreUniformVisibility(snapshot) {
-  const metrics = getSurfaceIlluminanceSummary(snapshot);
+  const direct = evaluateUniformVisibilityFromIlluminance(snapshot);
+  if (direct) return direct.score;
+  return scoreUniformVisibilityLegacy(snapshot);
+}
+
+function scoreUniformVisibilityLegacy(snapshot) {
   const lights = activeLights(snapshot);
   const keyLight = lights[0] || snapshot.lights[0];
-  if (metrics) {
-    const uniformity = metrics.maxIlluminance > 0 ? metrics.minIlluminance / metrics.maxIlluminance : 0;
-    const averageScore = clamp(metrics.averageIlluminance / 500 * 100, 0, 100);
-    return clamp(uniformity * 70 + averageScore * 0.3, 0, 100);
-  }
   return clamp(
     balanceScore(snapshot, 'intensity', 420, 180) * 0.55
       + Math.max(0, 100 - Math.abs(keyLight.x - 3) * 12 - Math.abs(keyLight.y - 3) * 12) * 0.25
@@ -1162,11 +1355,156 @@ function scoreVisualFocus(snapshot) {
 function getSurfaceIlluminanceSummary(snapshot) {
   const metrics = snapshot.surfaceIlluminanceSummary || snapshot.illuminanceSummary;
   if (!metrics) return null;
-  const averageIlluminance = Number(metrics.averageIlluminance ?? metrics.average ?? metrics.mean);
-  const minIlluminance = Number(metrics.minIlluminance ?? metrics.min);
-  const maxIlluminance = Number(metrics.maxIlluminance ?? metrics.max);
-  if ([averageIlluminance, minIlluminance, maxIlluminance].some((value) => Number.isNaN(value))) return null;
-  return { averageIlluminance, minIlluminance, maxIlluminance };
+  const averageIlluminance = nullableNumber(metrics.averageIlluminance ?? metrics.average ?? metrics.mean);
+  const minIlluminance = nullableNumber(metrics.minIlluminance ?? metrics.min);
+  const maxIlluminance = nullableNumber(metrics.maxIlluminance ?? metrics.max);
+  const percentile10Illuminance = nullableNumber(metrics.percentile10Illuminance ?? metrics.p10);
+  const uniformity = nullableNumber(metrics.uniformity);
+  const validSampleCount = Number(metrics.validSampleCount ?? metrics.sampleCount ?? 0);
+  const totalSampleCount = Number(metrics.totalSampleCount ?? metrics.sampleCount ?? validSampleCount);
+  if ([averageIlluminance, minIlluminance, maxIlluminance].some((value) => value === undefined || Number.isNaN(value))) return null;
+  const p10 = percentile10Illuminance === undefined || percentile10Illuminance === null || Number.isNaN(percentile10Illuminance)
+    ? minIlluminance
+    : percentile10Illuminance;
+  return {
+    averageIlluminance,
+    minIlluminance,
+    maxIlluminance,
+    percentile10Illuminance: p10,
+    uniformity: uniformity === null || Number.isNaN(uniformity)
+      ? computeUniformity(p10, averageIlluminance)
+      : clamp(uniformity, 0, 1),
+    validSampleCount: Number.isFinite(validSampleCount) ? validSampleCount : 0,
+    totalSampleCount: Number.isFinite(totalSampleCount) ? totalSampleCount : 0,
+  };
+}
+
+function updateDerivedIlluminance() {
+  const samples = generateSurfaceMeasurementPoints(state.modelId).map((sample) => {
+    const valid = isSampleFacingAnyEnabledLight(sample, state.lights);
+    const prepared = { ...sample, valid };
+    return {
+      ...prepared,
+      illuminance: calculateDirectIlluminanceAtSample(prepared, state.lights),
+    };
+  });
+  const summary = summarizeIlluminanceSamples(samples);
+  state.surfaceIlluminanceSamples = samples;
+  state.surfaceIlluminanceSummary = summary;
+  state.uniformVisibilityEvaluation = evaluateUniformVisibilityFromIlluminance(state);
+  return summary;
+}
+
+function isSampleFacingAnyEnabledLight(sample, lights) {
+  const enabled = activeLights({ lights });
+  if (!enabled.length) return true;
+  return enabled.some((light) => {
+    const incoming = normalizeVector(subtract(light, sample.position));
+    return dot(sample.normal, incoming) > 0.02;
+  });
+}
+
+function generateSurfaceMeasurementPoints(modelId = 'abstract') {
+  const center = { x: 0, y: 0, z: modelId === 'figure' ? 1.95 : modelId === 'bust' ? 1.85 : 1.7 };
+  const radius = modelId === 'figure' ? 0.82 : modelId === 'bust' ? 0.95 : 0.98;
+  const rings = [
+    { z: 0.76, count: 8 },
+    { z: 0.28, count: 10 },
+    { z: -0.26, count: 10 },
+    { z: -0.72, count: 8 },
+  ];
+  const samples = [];
+  rings.forEach((ring, ringIndex) => {
+    const radial = Math.sqrt(Math.max(0, 1 - ring.z ** 2));
+    for (let i = 0; i < ring.count; i += 1) {
+      const a = (Math.PI * 2 * i) / ring.count + ringIndex * 0.18;
+      const normal = normalizeVector({ x: Math.cos(a) * radial, y: Math.sin(a) * radial, z: ring.z });
+      samples.push({
+        id: `${modelId}-${ringIndex}-${i}`,
+        position: {
+          x: center.x + normal.x * radius,
+          y: center.y + normal.y * radius,
+          z: center.z + normal.z * radius,
+        },
+        normal,
+        illuminance: null,
+        valid: true,
+      });
+    }
+  });
+  return samples;
+}
+
+function calculateDirectIlluminanceAtSample(sample, lights) {
+  if (!sample.valid) return null;
+  return activeLights({ lights }).reduce((sum, light) => {
+    const toLight = subtract(light, sample.position);
+    const distanceSquared = Math.max(lengthSquared(toLight), 0.08);
+    const incoming = normalizeVector(toLight);
+    const incidence = Math.max(0, dot(sample.normal, incoming));
+    if (incidence <= 0) return sum;
+    const sourceDirection = normalizeVector(subtract(targetFromAngles(light), light));
+    const lightToPoint = normalizeVector(subtract(sample.position, light));
+    const aim = Math.max(0, dot(sourceDirection, lightToPoint));
+    if (light.kind === 'spot') {
+      const cutoff = Math.cos(clamp(light.spread, 0.08, 0.9));
+      if (aim <= cutoff) return sum;
+      const spotShape = ((aim - cutoff) / Math.max(1 - cutoff, 0.0001)) ** 1.6;
+      return sum + (light.intensity * incidence * spotShape) / distanceSquared;
+    }
+    const areaFactor = Math.max(light.width * light.height, 0.25);
+    const orientation = Math.max(0.1, aim);
+    return sum + (light.intensity * areaFactor * incidence * orientation) / (distanceSquared * 8);
+  }, 0);
+}
+
+function summarizeIlluminanceSamples(samples) {
+  const valid = samples.filter((sample) => (
+    sample.valid === true
+    && Number.isFinite(sample.illuminance)
+    && sample.illuminance >= 0
+  ));
+  if (!valid.length) {
+    return { ...clone(EMPTY_ILLUMINANCE_SUMMARY), totalSampleCount: samples.length };
+  }
+  const values = valid.map((sample) => sample.illuminance);
+  const total = values.reduce((sum, value) => sum + value, 0);
+  const averageIlluminance = total / values.length;
+  const minIlluminance = Math.min(...values);
+  const maxIlluminance = Math.max(...values);
+  const percentile10Illuminance = percentile(values, 0.1);
+  return {
+    averageIlluminance,
+    minIlluminance,
+    maxIlluminance,
+    percentile10Illuminance,
+    uniformity: computeUniformity(percentile10Illuminance, averageIlluminance),
+    validSampleCount: valid.length,
+    totalSampleCount: samples.length,
+  };
+}
+
+function computeUniformity(lowIlluminance, averageIlluminance) {
+  if (!Number.isFinite(lowIlluminance) || !Number.isFinite(averageIlluminance)) return null;
+  if (averageIlluminance <= 0) return 0;
+  return clamp(lowIlluminance / averageIlluminance, 0, 1);
+}
+
+function percentile(values, ratio) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  if (sorted.length === 1) return sorted[0];
+  const position = clamp(ratio, 0, 1) * (sorted.length - 1);
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  const weight = position - lower;
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+}
+
+function isUsableIlluminanceSummary(summary) {
+  if (!summary || summary.validSampleCount <= 0) return false;
+  return ['averageIlluminance', 'minIlluminance', 'maxIlluminance', 'uniformity']
+    .every((key) => summary[key] !== null && Number.isFinite(summary[key]));
 }
 
 function hintUniformVisibility(snapshot) {
@@ -1417,6 +1755,46 @@ function activeLights(snapshot) {
   return snapshot.lights.filter((light) => light.enabled !== false);
 }
 
+function preferredRangeScore(value, min, max) {
+  if (!Number.isFinite(value)) return 0;
+  if (value >= min && value <= max) return 100;
+  const reference = value < min ? min : max;
+  const distance = Math.abs(value - reference);
+  return clamp(100 - (distance / Math.max(reference, 1)) * 100, 0, 100);
+}
+
+function offsetSamplePosition(sample) {
+  return {
+    x: sample.position.x + sample.normal.x * SURFACE_SAMPLE_OFFSET,
+    y: sample.position.y + sample.normal.y * SURFACE_SAMPLE_OFFSET,
+    z: sample.position.z + sample.normal.z * SURFACE_SAMPLE_OFFSET,
+  };
+}
+
+function subtract(a, b) {
+  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+}
+
+function dot(a, b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+function lengthSquared(vector) {
+  return dot(vector, vector);
+}
+
+function normalizeVector(vector) {
+  const length = Math.sqrt(lengthSquared(vector));
+  if (!Number.isFinite(length) || length <= 0) return { x: 0, y: 0, z: 0 };
+  return { x: vector.x / length, y: vector.y / length, z: vector.z / length };
+}
+
+function nullableNumber(value) {
+  if (value === null) return null;
+  if (value === undefined) return undefined;
+  return Number(value);
+}
+
 function saturation(hex) {
   const rgb = hex.replace('#', '').match(/.{1,2}/g).map((part) => parseInt(part, 16) / 255);
   const max = Math.max(...rgb);
@@ -1456,11 +1834,17 @@ if (typeof window !== 'undefined') {
     submit,
     resetLights,
     scoreAllTasks,
+    evaluateTask,
+    updateDerivedIlluminance,
+    generateSurfaceMeasurementPoints,
+    summarizeIlluminanceSamples,
+    calculateDirectIlluminanceAtSample,
     isLightKindMismatch,
     supportCondition,
     legacyTaskIdMap,
     allowLightColorEditing,
     BASIC_TRAINING_LIGHT_COLOR,
     BASIC_TRAINING_LIGHT_COLOR_LABEL,
+    PROVISIONAL_VISIBILITY_THRESHOLDS,
   };
 }

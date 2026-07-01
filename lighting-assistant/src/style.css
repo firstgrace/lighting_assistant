@@ -31,7 +31,7 @@ body {
 }
 
 body {
-  overflow: hidden;
+  overflow: auto;
 }
 
 button,
@@ -57,6 +57,7 @@ button {
   position: fixed;
   inset: 0;
   z-index: 2;
+  overflow-y: auto;
   pointer-events: auto;
 }
 
@@ -71,6 +72,15 @@ button {
   display: grid;
   place-items: center;
   background: rgba(16, 17, 20, 0.82);
+}
+
+.feedback-screen {
+  align-items: start;
+  min-height: 100vh;
+}
+
+.feedback-screen.is-scrollable {
+  overflow: visible;
 }
 
 .setup-card {
@@ -639,10 +649,12 @@ button {
 
 .feedback-card {
   width: min(1120px, 100%);
+  height: auto;
+  min-height: 0;
   pointer-events: auto;
   background: var(--surface);
   border-radius: 10px;
-  overflow: hidden;
+  overflow: visible;
   will-change: transform;
 }
 
@@ -660,9 +672,12 @@ button {
   grid-template-columns: 430px 1fr;
   gap: 24px;
   padding: 28px;
+  min-height: 0;
 }
 
 .score-panel {
+  height: auto;
+  min-height: 0;
   padding: 30px;
   background: rgba(0, 0, 0, 0.42);
   border: 1px solid var(--line);
@@ -799,7 +814,8 @@ button {
 
 .score-bars-panel {
   position: relative;
-  min-height: 520px;
+  height: auto;
+  min-height: 0;
   padding: 30px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--line);
@@ -919,6 +935,10 @@ button {
   .operation-grid,
   .feedback-body {
     grid-template-columns: 1fr;
+  }
+
+  .feedback-card {
+    width: min(760px, 100%);
   }
 
   .operation-screen {
