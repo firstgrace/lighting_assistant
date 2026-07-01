@@ -2,7 +2,14 @@ let THREE = null;
 let RectAreaLightUniformsLib = null;
 let scene = createFallbackScene();
 const PASS_SCORE = 70;
-const BASIC_TRAINING_LIGHT_COLOR = '#ffffff';
+const BASIC_TRAINING_LIGHT_COLOR = '#fffaf0';
+const BASIC_TRAINING_LIGHT_COLOR_LABEL = '\u663c\u767d\u8272\uff085000K\u76f8\u5f53\uff09';
+const SUBJECT_MATERIAL = { color: 0x7f93a8, roughness: 0.68, metalness: 0 };
+const STAGE_MATERIALS = {
+  floor: 0x575b62,
+  wall: 0x383b42,
+  plinth: 0x4b4f58,
+};
 const trainingMode = 'basic';
 const allowLightColorEditing = trainingMode !== 'basic';
 
@@ -22,13 +29,46 @@ const legacyTaskIdMap = {
   eeriness: 'visual_focus',
 };
 
-const tasks = [
+const tutorialTasks = [
+  {
+    id: 'tutorial_light_object',
+    label: '\u7269\u4f53\u3092\u7167\u3089\u3057\u3066\u307f\u3088\u3046',
+    shortLabel: '\u7167\u3089\u3059\u7df4\u7fd2',
+    description: '\u30e9\u30a4\u30c8\u306e\u4f4d\u7f6e\u3084\u5411\u304d\u3092\u5909\u3048\u3001\u7269\u4f53\u5168\u4f53\u306b\u5149\u304c\u5c4a\u304f\u3088\u3046\u306b\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+    learningPoints: ['\u30e9\u30a4\u30c8\u4f4d\u7f6e', '\u30e9\u30a4\u30c8\u306e\u5411\u304d', '\u30e9\u30a4\u30c8\u5f37\u5ea6'],
+    internalEvaluationName: '\u57fa\u790e\u64cd\u4f5c',
+    candidateMetrics: [],
+    scoreEnabled: false,
+    hint: hintTutorialLightObject,
+    provisionalEvaluation: '\u3053\u306e\u7df4\u7fd2\u306f\u63a1\u70b9\u5bfe\u8c61\u5916\u3067\u3059\u3002',
+    reflectionQuestion: '\u5149\u304c\u5c4a\u304d\u306b\u304f\u304b\u3063\u305f\u9762\u306f\u3069\u3053\u3067\u3057\u305f\u304b\uff1f',
+  },
+  {
+    id: 'tutorial_reduce_light',
+    label: '\u7269\u4f53\u3092\u3067\u304d\u308b\u3060\u3051\u7167\u3089\u3055\u306a\u3044\u3088\u3046\u306b\u3057\u3066\u307f\u3088\u3046',
+    shortLabel: '\u6e1b\u5149\u7df4\u7fd2',
+    description: '\u30e9\u30a4\u30c8\u306e\u5411\u304d\u3084\u70b9\u706f\u72b6\u614b\u3092\u5909\u3048\u3001\u7269\u4f53\u306b\u5c4a\u304f\u5149\u3092\u6e1b\u3089\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+    learningPoints: ['\u70b9\u706f\u72b6\u614b', '\u7167\u5c04\u65b9\u5411', '\u5149\u306e\u5c4a\u304d\u65b9'],
+    internalEvaluationName: '\u57fa\u790e\u64cd\u4f5c',
+    candidateMetrics: [],
+    scoreEnabled: false,
+    hint: hintTutorialReduceLight,
+    provisionalEvaluation: '\u3053\u306e\u7df4\u7fd2\u306f\u63a1\u70b9\u5bfe\u8c61\u5916\u3067\u3059\u3002',
+    reflectionQuestion: '\u30e9\u30a4\u30c8\u3092\u6d88\u3059\u306e\u3068\u5411\u304d\u3092\u5916\u3059\u306e\u3067\u3001\u898b\u3048\u65b9\u306f\u3069\u3046\u5909\u308f\u308a\u307e\u3057\u305f\u304b\uff1f',
+  },
+];
+
+const mainTasks = [
   {
     id: 'uniform_visibility',
     legacyIds: ['flat'],
-    label: '\u898b\u3084\u3059\u3044',
-    description: '\u4f5c\u54c1\u5168\u4f53\u306b\u5927\u304d\u306a\u660e\u308b\u3055\u306e\u30e0\u30e9\u304c\u306a\u304f\u3001\u3069\u306e\u90e8\u5206\u3082\u898b\u3084\u3059\u3044\u7167\u660e\u3092\u4f5c\u308d\u3046\u3002',
+    label: '\u4f5c\u54c1\u5168\u4f53\u3092\u898b\u3084\u3059\u304f\u3057\u3088\u3046',
+    shortLabel: '\u898b\u3084\u3059\u3044',
+    description: '\u660e\u308b\u3059\u304e\u308b\u90e8\u5206\u3084\u6697\u3059\u304e\u308b\u90e8\u5206\u3092\u6291\u3048\u3001\u4f5c\u54c1\u5168\u4f53\u306e\u5f62\u304c\u5206\u304b\u308b\u7167\u660e\u3092\u3064\u304f\u308a\u307e\u3059\u3002',
     learningPoints: ['\u7167\u5ea6\u5206\u5e03', '\u5747\u6589\u5ea6', '\u8907\u6570\u706f\u306e\u30d0\u30e9\u30f3\u30b9'],
+    internalEvaluationName: '\u5168\u4f53\u306e\u660e\u77ad\u6027',
+    candidateMetrics: ['\u5e73\u5747\u7167\u5ea6', '\u6700\u5c0f\u30fb\u6700\u5927\u7167\u5ea6', '\u5747\u6589\u5ea6'],
+    scoreEnabled: true,
     provisionalEvaluation: '\u76f4\u63a5\u7167\u5ea6\u8a55\u4fa1\u304c\u672a\u63a5\u7d9a\u306e\u5834\u5408\u306f\u3001\u65e7\u300c\u5e73\u51e1\u300d\u8a55\u4fa1\u3092\u5747\u6589\u5ea6\u306e\u66ab\u5b9a\u6307\u6a19\u3068\u3057\u3066\u4f7f\u7528\u3057\u307e\u3059\u3002',
     rules: [scoreUniformVisibility],
     hint: hintUniformVisibility,
@@ -38,9 +78,13 @@ const tasks = [
   {
     id: 'shape_emphasis',
     legacyIds: ['dread'],
-    label: '\u7acb\u4f53\u7684',
-    description: '\u4f5c\u54c1\u304c\u5e73\u3089\u306b\u898b\u3048\u306a\u3044\u3088\u3046\u306b\u3001\u5f62\u3084\u51f9\u51f8\u304c\u5206\u304b\u308b\u7167\u660e\u3092\u4f5c\u308d\u3046\u3002',
+    label: '\u4f5c\u54c1\u306e\u5f62\u3084\u51f9\u51f8\u3092\u5370\u8c61\u7684\u306b\u898b\u305b\u3088\u3046',
+    shortLabel: '\u7acb\u4f53\u7684',
+    description: '\u660e\u308b\u3044\u9762\u3068\u6697\u3044\u9762\u3092\u3064\u304f\u308a\u3001\u4f5c\u54c1\u306e\u7acb\u4f53\u7684\u306a\u5f62\u72b6\u304c\u4f1d\u308f\u308b\u7167\u660e\u3092\u3064\u304f\u308a\u307e\u3059\u3002',
     learningPoints: ['\u5165\u5c04\u65b9\u5411', '\u4e3b\u5149\u3068\u88dc\u52a9\u5149', '\u660e\u6697\u6bd4'],
+    internalEvaluationName: '\u5f62\u72b6\u306e\u660e\u77ad\u6027',
+    candidateMetrics: ['\u9762\u3054\u3068\u306e\u660e\u6697\u5dee', '\u4e3b\u5149\u65b9\u5411', '\u660e\u6697\u6bd4'],
+    scoreEnabled: true,
     provisionalEvaluation: '\u65e7\u300c\u5a01\u5727\u611f\u300d\u8a55\u4fa1\u306e\u660e\u6697\u5dee\u30fb\u30b9\u30dd\u30c3\u30c8\u6027\u3092\u3001\u7acb\u4f53\u611f\u306e\u66ab\u5b9a\u6307\u6a19\u3068\u3057\u3066\u4f7f\u7528\u3057\u307e\u3059\u3002',
     rules: [scoreShapeEmphasis],
     hint: hintShapeEmphasis,
@@ -50,9 +94,13 @@ const tasks = [
   {
     id: 'soft_lighting',
     legacyIds: ['calm'],
-    label: '\u3084\u308f\u3089\u304b\u3044',
-    description: '\u5149\u304c\u5f37\u3059\u304e\u305a\u3001\u5f71\u304c\u304f\u3063\u304d\u308a\u3057\u3059\u304e\u306a\u3044\u3001\u843d\u3061\u7740\u3044\u305f\u7167\u660e\u3092\u4f5c\u308d\u3046\u3002',
+    label: '\u4f5c\u54c1\u3092\u3084\u308f\u3089\u304b\u3044\u5370\u8c61\u306b\u898b\u305b\u3088\u3046',
+    shortLabel: '\u3084\u308f\u3089\u304b\u3044',
+    description: '\u5f71\u306e\u5883\u754c\u3084\u660e\u6697\u306e\u5909\u5316\u3092\u7a4f\u3084\u304b\u306b\u3057\u3001\u843d\u3061\u7740\u3044\u3066\u898b\u3089\u308c\u308b\u7167\u660e\u3092\u3064\u304f\u308a\u307e\u3059\u3002',
     learningPoints: ['\u5149\u6e90\u9762\u7a4d', '\u62e1\u6563', '\u5f71\u306e\u67d4\u3089\u304b\u3055'],
+    internalEvaluationName: '\u9670\u5f71\u306e\u7a4f\u3084\u304b\u3055',
+    candidateMetrics: ['\u5149\u6e90\u9762\u7a4d', '\u660e\u6697\u52fe\u914d', '\u5f71\u5883\u754c\u306e\u6ed1\u3089\u304b\u3055'],
+    scoreEnabled: true,
     provisionalEvaluation: '\u65e7\u300c\u7a4f\u3084\u304b\u300d\u8a55\u4fa1\u306e\u9762\u5149\u6e90\u9762\u7a4d\u30fb\u30b9\u30dd\u30c3\u30c8\u5f31\u5ea6\u3092\u66ab\u5b9a\u6307\u6a19\u3068\u3057\u3066\u4f7f\u7528\u3057\u307e\u3059\u3002',
     rules: [scoreSoftLighting],
     hint: hintSoftLighting,
@@ -62,9 +110,13 @@ const tasks = [
   {
     id: 'background_separation',
     legacyIds: ['mystery'],
-    label: '\u304f\u3063\u304d\u308a',
-    description: '\u4f5c\u54c1\u304c\u80cc\u666f\u306b\u57cb\u3082\u308c\u305a\u3001\u5916\u5074\u306e\u5f62\u304c\u5206\u304b\u308b\u7167\u660e\u3092\u4f5c\u308d\u3046\u3002',
+    label: '\u4f5c\u54c1\u306e\u8f2a\u90ed\u3092\u80cc\u666f\u304b\u3089\u969b\u7acb\u305f\u305b\u3088\u3046',
+    shortLabel: '\u304f\u3063\u304d\u308a',
+    description: '\u4f5c\u54c1\u3068\u80cc\u666f\u306e\u660e\u308b\u3055\u306b\u5dee\u3092\u3064\u3051\u3001\u8f2a\u90ed\u304c\u306f\u3063\u304d\u308a\u898b\u3048\u308b\u7167\u660e\u3092\u3064\u304f\u308a\u307e\u3059\u3002',
     learningPoints: ['\u9006\u5149', '\u8f2a\u90ed\u5149', '\u80cc\u666f\u3068\u306e\u5206\u96e2', '\u6b63\u9762\u5149\u3068\u306e\u6bd4\u7387'],
+    internalEvaluationName: '\u80cc\u666f\u304b\u3089\u306e\u5206\u96e2',
+    candidateMetrics: ['\u8f2a\u90ed\u5468\u8fba\u306e\u660e\u6697\u5dee', '\u80cc\u666f\u3068\u306e\u660e\u6697\u5dee', '\u30ea\u30e0\u5149'],
+    scoreEnabled: true,
     provisionalEvaluation: '\u65e7\u300c\u795e\u79d8\u7684\u300d\u8a55\u4fa1\u306e\u80cc\u9762\u5149\u30fb\u6b63\u9762\u5149\u6291\u5236\u3092\u3001\u8f2a\u90ed\u5206\u96e2\u306e\u66ab\u5b9a\u6307\u6a19\u3068\u3057\u3066\u4f7f\u7528\u3057\u307e\u3059\u3002',
     rules: [scoreBackgroundSeparation],
     hint: hintBackgroundSeparation,
@@ -74,9 +126,14 @@ const tasks = [
   {
     id: 'visual_focus',
     legacyIds: ['eeriness'],
-    label: '\u76ee\u3092\u5f15\u304f',
-    description: '\u4f5c\u54c1\u306e\u4e2d\u3067\u4e00\u756a\u898b\u305b\u305f\u3044\u90e8\u5206\u306b\u3001\u81ea\u7136\u306b\u8996\u7dda\u304c\u96c6\u307e\u308b\u7167\u660e\u3092\u4f5c\u308d\u3046\u3002',
+    label: '\u4e2d\u592e\u4e0a\u90e8\u306b\u6ce8\u76ee\u3092\u96c6\u3081\u3088\u3046',
+    shortLabel: '\u76ee\u3092\u5f15\u304f',
+    description: '\u4f5c\u54c1\u306e\u4e2d\u592e\u4e0a\u90e8\u3092\u5468\u56f2\u3088\u308a\u76ee\u7acb\u305f\u305b\u3001\u81ea\u7136\u306b\u8996\u7dda\u304c\u5411\u304f\u7167\u660e\u3092\u3064\u304f\u308a\u307e\u3059\u3002',
     learningPoints: ['\u5c40\u6240\u7167\u660e', '\u30b3\u30f3\u30c8\u30e9\u30b9\u30c8', '\u8996\u7dda\u8a98\u5c0e', '\u80cc\u666f\u3068\u306e\u660e\u6697\u5dee'],
+    internalEvaluationName: '\u6ce8\u76ee\u9818\u57df\u306e\u5f37\u8abf',
+    candidateMetrics: ['\u6307\u5b9a\u9818\u57df\u3068\u5468\u8fba\u306e\u660e\u6697\u5dee', '\u5149\u306e\u5c40\u6240\u6027', '\u767d\u98db\u3073\u9632\u6b62'],
+    attentionTarget: '\u4e2d\u592e\u4e0a\u90e8',
+    scoreEnabled: true,
     provisionalEvaluation: '\u8272\u5f69\u8a55\u4fa1\u3092\u4f7f\u308f\u305a\u3001\u65e7\u30ed\u30b8\u30c3\u30af\u306e\u4f4d\u7f6e\u30fb\u5c40\u6240\u7684\u306a\u5149\u306e\u7279\u5fb4\u3060\u3051\u3092\u66ab\u5b9a\u6307\u6a19\u3068\u3057\u3066\u4f7f\u7528\u3057\u307e\u3059\u3002',
     rules: [scoreVisualFocus],
     hint: hintVisualFocus,
@@ -85,6 +142,8 @@ const tasks = [
   },
 ];
 
+const tasks = [...tutorialTasks, ...mainTasks];
+
 const models = [
   { id: 'abstract', label: '\u5e7e\u4f55' },
   { id: 'bust', label: '\u80f8\u50cf' },
@@ -92,20 +151,22 @@ const models = [
 ];
 
 const defaultLights = [
-  { kind: 'spot', x: 3, y: 4, z: 4, intensity: 430, spread: 0.34, width: 3, height: 3, elevation: -35, azimuth: -135, color: BASIC_TRAINING_LIGHT_COLOR },
-  { kind: 'area', x: -3, y: 2, z: 3.2, intensity: 360, spread: 0.55, width: 3.4, height: 2.8, elevation: -28, azimuth: 135, color: BASIC_TRAINING_LIGHT_COLOR },
-  { kind: 'spot', x: 0, y: -5, z: 3, intensity: 180, spread: 0.42, width: 2.4, height: 2.4, elevation: -18, azimuth: 0, color: BASIC_TRAINING_LIGHT_COLOR },
+  { enabled: true, showHelper: true, kind: 'spot', x: 3.2, y: 4.2, z: 4.8, intensity: 320, spread: 0.42, width: 3, height: 3, elevation: -35, azimuth: -135, color: BASIC_TRAINING_LIGHT_COLOR },
+  { enabled: true, showHelper: true, kind: 'area', x: -4, y: 2.5, z: 4, intensity: 260, spread: 0.55, width: 5, height: 3.8, elevation: -35, azimuth: 130, color: BASIC_TRAINING_LIGHT_COLOR },
+  { enabled: false, showHelper: true, kind: 'spot', x: 0, y: -5, z: 3, intensity: 140, spread: 0.5, width: 2.4, height: 2.4, elevation: -18, azimuth: 0, color: BASIC_TRAINING_LIGHT_COLOR },
 ];
 
 const state = {
   phase: 'setup',
-  taskId: 'uniform_visibility',
+  taskId: 'tutorial_light_object',
   modelId: 'abstract',
   assist: { hint: true, feedback: true },
   activeLight: 0,
   lights: clone(defaultLights),
   history: [],
   startedAt: 0,
+  startedAtIso: '',
+  sessionStats: createSessionStats(),
   camera: { theta: -38, phi: 54, radius: 9.2, view: 'free' },
   feedbackPosition: { x: 0, y: 0 },
   result: null,
@@ -124,7 +185,8 @@ class LightingScene {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    if (THREE.SRGBColorSpace) this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.NeutralToneMapping || THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1;
     this.lightObjects = [];
     this.markers = [];
@@ -142,7 +204,7 @@ class LightingScene {
   buildStage() {
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(24, 24),
-      new THREE.MeshStandardMaterial({ color: 0x47494f, roughness: 0.78 }),
+      new THREE.MeshStandardMaterial({ color: STAGE_MATERIALS.floor, roughness: 0.78 }),
     );
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
@@ -150,14 +212,14 @@ class LightingScene {
 
     const wall = new THREE.Mesh(
       new THREE.PlaneGeometry(24, 12),
-      new THREE.MeshStandardMaterial({ color: 0x282a30, roughness: 0.82 }),
+      new THREE.MeshStandardMaterial({ color: STAGE_MATERIALS.wall, roughness: 0.82 }),
     );
     wall.position.set(0, 6, -5.6);
     this.scene.add(wall);
 
     const plinth = new THREE.Mesh(
       new THREE.BoxGeometry(2.4, 0.38, 2.4),
-      new THREE.MeshStandardMaterial({ color: 0x6b6e75, roughness: 0.64 }),
+      new THREE.MeshStandardMaterial({ color: STAGE_MATERIALS.plinth, roughness: 0.64 }),
     );
     plinth.position.set(0, 0.19, 0);
     plinth.castShadow = true;
@@ -174,7 +236,7 @@ class LightingScene {
 
   setModel(modelId) {
     this.modelGroup.clear();
-    const mat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.47 });
+    const mat = new THREE.MeshStandardMaterial(SUBJECT_MATERIAL);
 
     if (modelId === 'bust') {
       const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.82, 1.45, 12, 32), mat);
@@ -251,7 +313,7 @@ class LightingScene {
       const pos = toThree(data);
       const target = toThree(targetFromAngles(data));
       entry.light.position.copy(pos);
-      entry.light.intensity = data.intensity;
+      entry.light.intensity = data.enabled === false ? 0 : data.intensity;
       entry.light.color.set(data.color);
       entry.target.position.copy(target);
       if (entry.light.isSpotLight) {
@@ -262,7 +324,9 @@ class LightingScene {
         entry.light.lookAt(target);
       }
       orientLightMarker(this.markers[index], pos, target, data, index === state.activeLight);
-      this.markers[index].material.color.set(index === state.activeLight ? 0xecff72 : 0x5265ff);
+      this.markers[index].visible = data.showHelper !== false;
+      this.markers[index].material.color.set(data.enabled === false ? 0x7a7f8c : (index === state.activeLight ? 0xecff72 : 0x5265ff));
+      this.markers[index].material.opacity = data.enabled === false ? 0.36 : (data.kind === 'area' ? 0.78 : 0.92);
     });
   }
 
@@ -384,6 +448,7 @@ function renderSetup() {
             ${tasks.map((task) => `
               <button type="button" class="task-choice ${task.id === state.taskId ? 'is-selected' : ''}" data-task="${task.id}">
                 <span class="task-dot"></span>
+                <span class="task-badge">${task.scoreEnabled === false ? '\u30c1\u30e5\u30fc\u30c8\u30ea\u30a2\u30eb' : '\u672c\u8ab2\u984c'}</span>
                 <span class="task-name">${task.label}</span>
                 <span class="task-detail">${task.description}<br><strong>\u4eca\u56de\u306e\u30dd\u30a4\u30f3\u30c8:</strong> ${task.learningPoints.join('\u30fb')}</span>
               </button>
@@ -443,6 +508,7 @@ function renderOperation() {
         <div class="topic">
           <strong>[\u984c\uff1a${task.label}]</strong>
           <span>${task.description}</span>
+          ${task.attentionTarget ? `<em class="attention-note">\u6ce8\u76ee\u9818\u57df: ${task.attentionTarget}</em>` : ''}
         </div>
         <div class="toolbar-actions">
           <button type="button" class="secondary-btn" id="save">\u4fdd\u5b58</button>
@@ -483,6 +549,17 @@ function renderOperation() {
             <button type="button" class="type-btn ${light.kind === 'spot' ? 'is-selected' : ''}" data-kind="spot">\u30b9\u30dd\u30c3\u30c8</button>
             <button type="button" class="type-btn ${light.kind === 'area' ? 'is-selected' : ''}" data-kind="area">\u30a8\u30ea\u30a2</button>
           </div>
+          <div class="light-state-controls">
+            <label class="check-row">
+              <input id="light-enabled" type="checkbox" ${light.enabled === false ? '' : 'checked'} />
+              <span>\u30e9\u30a4\u30c8\u3092\u70b9\u706f</span>
+            </label>
+            <label class="check-row">
+              <input id="helper-visible" type="checkbox" ${light.showHelper === false ? '' : 'checked'} />
+              <span>\u64cd\u4f5c\u30ac\u30a4\u30c9\u3092\u8868\u793a</span>
+            </label>
+            <button type="button" class="tool-btn" id="reset-lights">\u521d\u671f\u72b6\u614b\u306b\u623b\u3059</button>
+          </div>
           <div class="map-and-values">
             ${topMap()}
             <div class="slider-list">
@@ -504,7 +581,7 @@ function renderOperation() {
           ` : `
             <div class="color-row is-locked">
               <span>\u30e9\u30a4\u30c8\u8272</span>
-              <strong>\u57fa\u790e\u8ab2\u984c\u3067\u306f\u767d\u8272\u306b\u56fa\u5b9a</strong>
+              <strong>\u57fa\u790e\u8ab2\u984c\u3067\u306f${BASIC_TRAINING_LIGHT_COLOR_LABEL}\u306b\u56fa\u5b9a</strong>
             </div>
           `}
           <div class="submit-wrap">
@@ -647,6 +724,15 @@ function bindOperation() {
       renderOperation();
     });
   });
+  app.querySelector('#light-enabled').addEventListener('change', (event) => {
+    updateLight('enabled', event.target.checked);
+    renderOperation();
+  });
+  app.querySelector('#helper-visible').addEventListener('change', (event) => {
+    updateLight('showHelper', event.target.checked);
+    renderOperation();
+  });
+  app.querySelector('#reset-lights').addEventListener('click', resetLights);
   app.querySelectorAll('input[type="range"][data-param]').forEach((input) => {
     input.addEventListener('input', (event) => {
       updateLight(event.target.dataset.param, Number(event.target.value));
@@ -744,6 +830,18 @@ function startTask() {
   state.lights = normalizeBasicLightColors(clone(defaultLights));
   state.history = [];
   state.startedAt = performance.now();
+  state.startedAtIso = new Date().toISOString();
+  state.sessionStats = createSessionStats();
+  scene.buildLights();
+  scene.updateLights(state.lights);
+  renderOperation();
+}
+
+function resetLights() {
+  state.lights = normalizeBasicLightColors(clone(defaultLights));
+  state.activeLight = 0;
+  state.sessionStats.resetCount += 1;
+  logChange('reset', 'initial-lights');
   scene.buildLights();
   scene.updateLights(state.lights);
   renderOperation();
@@ -752,15 +850,28 @@ function startTask() {
 function submit() {
   const task = currentTask();
   const allScores = scoreAllTasks(state);
-  const current = allScores.find((score) => score.id === state.taskId).score;
+  const currentScore = allScores.find((score) => score.id === state.taskId);
+  const current = task.scoreEnabled === false ? null : currentScore?.score ?? 0;
+  const feedbackInput = buildFeedbackInput(task, current, allScores, state);
   state.result = {
     current,
-    pass: current >= PASS_SCORE,
+    targetReached: current === null ? null : current >= PASS_SCORE,
     allScores,
-    critique: task.critique(current, state),
-    reflectionQuestion: task.reflectionQuestion,
+    feedbackInput,
+    feedback: buildRuleBasedFeedback(task, current, state, feedbackInput),
     provisionalNote: task.provisionalEvaluation,
   };
+  state.history.push({
+    at: new Date().toISOString(),
+    elapsed: (performance.now() - state.startedAt) / 1000,
+    taskId: state.taskId,
+    param: 'decision',
+    value: current,
+    supportCondition: clone(supportCondition),
+    actionSummary: clone(state.sessionStats),
+    internalEvaluationValues: feedbackInput.metrics,
+    lights: clone(state.lights),
+  });
   state.phase = 'feedback';
   render();
 }
@@ -821,12 +932,16 @@ function updateLight(param, value) {
 }
 
 function logChange(param, value) {
+  updateSessionStats(param);
   state.history.push({
     at: new Date().toISOString(),
     elapsed: (performance.now() - state.startedAt) / 1000,
+    taskId: state.taskId,
+    supportCondition: clone(supportCondition),
     light: state.activeLight + 1,
     param,
     value,
+    actionSummary: clone(state.sessionStats),
     lights: clone(state.lights),
   });
 }
@@ -846,43 +961,150 @@ function showHint(task, snapshot) {
 }
 
 function showScoreResult(result) {
+  if (result.current === null) {
+    return `
+      <div class="score-line">
+        <span class="score-state">\u30c1\u30e5\u30fc\u30c8\u30ea\u30a2\u30eb</span>
+        <strong>--<span>/100\u70b9</span></strong>
+      </div>
+      <p class="pass-line">\u3053\u306e\u8ab2\u984c\u306f\u30b9\u30b3\u30a2\u5bfe\u8c61\u5916\u3067\u3059\u3002</p>
+      <p class="provisional-note">${result.provisionalNote}</p>
+    `;
+  }
   const scoreMarkup = supportCondition.showScoreAfterDecision
     ? `<strong>${result.current}<span>/100\u70b9</span></strong>`
     : '<strong>--<span>/100\u70b9</span></strong>';
-  const passMarkup = supportCondition.showPassFailAfterDecision
-    ? `<span class="score-state">${result.pass ? 'PASS' : 'RETRY'}</span>`
-    : '<span class="score-state">\u8a55\u4fa1</span>';
+  const targetMarkup = supportCondition.showPassFailAfterDecision
+    ? `<span class="score-state">${result.targetReached ? '\u66ab\u5b9a\u76ee\u6a19\u306b\u5230\u9054' : '\u66ab\u5b9a\u76ee\u6a19\u307e\u3067\u3042\u3068\u5c11\u3057'}</span>`
+    : '<span class="score-state">\u66ab\u5b9a\u30b9\u30b3\u30a2</span>';
+  const metricsMarkup = metricList(result.feedbackInput);
   return `
     <div class="score-line">
-      ${passMarkup}
+      ${targetMarkup}
       ${scoreMarkup}
     </div>
-    <p class="pass-line">\u66ab\u5b9a\u5408\u683c\u30e9\u30a4\u30f3: ${PASS_SCORE}/100\u70b9\u4ee5\u4e0a</p>
+    <p class="pass-line">\u66ab\u5b9a\u76ee\u6a19: ${PASS_SCORE}/100\u70b9</p>
+    <p class="score-note">\u5185\u90e8\u8a55\u4fa1: ${currentTask().internalEvaluationName}</p>
+    ${metricsMarkup}
     <p class="provisional-note">${result.provisionalNote}</p>
   `;
 }
 
 function showPerformanceCritique(result) {
   if (!state.assist.feedback || !supportCondition.showCritiqueAfterDecision) return '';
-  return `<section class="critique-block"><h2>\u30d5\u30a3\u30fc\u30c9\u30d0\u30c3\u30af</h2><p class="critique">${result.critique}</p></section>`;
+  const feedback = result.feedback;
+  return `
+    <section class="critique-block">
+      <h2>\u30d5\u30a3\u30fc\u30c9\u30d0\u30c3\u30af</h2>
+      <h3>\u826f\u304b\u3063\u305f\u70b9</h3>
+      <ul class="feedback-list">${feedback.positiveFeatures.map((item) => `<li>${item}</li>`).join('')}</ul>
+      <h3>\u4e3b\u306a\u554f\u984c</h3>
+      <ul class="feedback-list">${feedback.detectedIssues.map((item) => `<li>${item}</li>`).join('')}</ul>
+      <h3>\u6b21\u306b\u898b\u308b\u3079\u304d\u70b9</h3>
+      <p class="critique">${feedback.nextObservation}</p>
+    </section>
+  `;
 }
 
 function showReflectionQuestion(result) {
   if (!supportCondition.showReflectionQuestionAfterDecision) return '';
-  return `<section class="reflection-block"><h2>\u5185\u7701\u306e\u554f\u3044</h2><p>${result.reflectionQuestion}</p></section>`;
+  return `<section class="reflection-block"><h2>\u5185\u7701\u306e\u554f\u3044</h2><p>${result.feedback.reflectionQuestion}</p></section>`;
 }
 
 function scoreAllTasks(snapshot) {
-  return tasks.map((task) => {
+  return tasks.filter((task) => task.scoreEnabled !== false).map((task) => {
     // These rules are provisional bridges from the previous parameter-based evaluator.
     // Replace per-task rules with surface illuminance / visibility metrics as they become available.
     const score = Math.round(task.rules.reduce((sum, rule) => sum + rule(snapshot), 0) / task.rules.length);
-    return { id: task.id, title: task.label, score: clamp(score, 0, 100) };
+    return { id: task.id, title: task.shortLabel || task.label, score: clamp(score, 0, 100), internalEvaluationName: task.internalEvaluationName };
   });
+}
+
+function buildFeedbackInput(task, score, allScores, snapshot) {
+  const surface = getSurfaceIlluminanceSummary(snapshot);
+  const metrics = {
+    averageIlluminance: task.id === 'uniform_visibility' ? surface?.averageIlluminance ?? null : null,
+    minIlluminance: task.id === 'uniform_visibility' ? surface?.minIlluminance ?? null : null,
+    maxIlluminance: task.id === 'uniform_visibility' ? surface?.maxIlluminance ?? null : null,
+    uniformity: task.id === 'uniform_visibility' && surface?.maxIlluminance > 0 ? surface.minIlluminance / surface.maxIlluminance : null,
+    highlightClippingRate: null,
+    darkAreaRate: null,
+    objectBackgroundContrast: null,
+  };
+  return {
+    taskId: task.id,
+    taskTitle: task.label,
+    score,
+    metrics,
+    detectedIssues: [],
+    positiveFeatures: [],
+    actionSummary: clone(snapshot.sessionStats),
+    allScores,
+  };
+}
+
+function buildRuleBasedFeedback(task, score, snapshot, feedbackInput) {
+  if (task.scoreEnabled === false) {
+    return {
+      positiveFeatures: ['\u30e9\u30a4\u30c8\u306e\u4f4d\u7f6e\u30fb\u5411\u304d\u30fb\u70b9\u706f\u72b6\u614b\u306e\u95a2\u4fc2\u3092\u78ba\u8a8d\u3067\u304d\u307e\u3057\u305f\u3002'],
+      detectedIssues: ['\u3053\u306e\u7df4\u7fd2\u306f\u63a1\u70b9\u5bfe\u8c61\u5916\u306e\u305f\u3081\u3001\u8a55\u4fa1\u5024\u306f\u8868\u793a\u3057\u3066\u3044\u307e\u305b\u3093\u3002'],
+      nextObservation: '\u7269\u4f53\u306e\u8868\u9762\u306b\u5149\u304c\u5c4a\u3044\u3066\u3044\u308b\u9762\u3068\u3001\u5c4a\u3044\u3066\u3044\u306a\u3044\u9762\u306e\u9055\u3044\u3092\u898b\u6bd4\u3079\u3066\u304f\u3060\u3055\u3044\u3002',
+      reflectionQuestion: task.reflectionQuestion,
+    };
+  }
+
+  const positiveFeatures = [];
+  const detectedIssues = [];
+  const active = activeLights(snapshot);
+  if (active.length >= 2) positiveFeatures.push('\u8907\u6570\u306e\u30e9\u30a4\u30c8\u306e\u5f79\u5272\u3092\u7d44\u307f\u5408\u308f\u305b\u3066\u8a66\u884c\u3057\u3066\u3044\u307e\u3059\u3002');
+  if (feedbackInput.actionSummary.lightMoveCount > 2) positiveFeatures.push('\u914d\u7f6e\u3092\u52d5\u304b\u3057\u3066\u3001\u5149\u306e\u5f53\u305f\u308a\u65b9\u306e\u5909\u5316\u3092\u63a2\u308c\u3066\u3044\u307e\u3059\u3002');
+  if (!positiveFeatures.length) positiveFeatures.push('\u6700\u7d42\u72b6\u614b\u3068\u8ab2\u984c\u306e\u95a2\u4fc2\u3092\u78ba\u8a8d\u3067\u304d\u308b\u8a2d\u5b9a\u304c\u4f5c\u3089\u308c\u3066\u3044\u307e\u3059\u3002');
+
+  if (score < PASS_SCORE) detectedIssues.push('\u66ab\u5b9a\u30b9\u30b3\u30a2\u306f\u76ee\u6a19\u3088\u308a\u4f4e\u304f\u3001\u898b\u3048\u65b9\u306e\u7279\u5fb4\u304c\u307e\u3060\u5f31\u3044\u72b6\u614b\u3067\u3059\u3002');
+  if (active.length === 0) detectedIssues.push('\u70b9\u706f\u3057\u3066\u3044\u308b\u30e9\u30a4\u30c8\u304c\u306a\u304f\u3001\u7269\u4f53\u8868\u9762\u306e\u60c5\u5831\u304c\u8aad\u307f\u306b\u304f\u3044\u72b6\u614b\u3067\u3059\u3002');
+  if (!detectedIssues.length) detectedIssues.push('\u5927\u304d\u306a\u7834\u7dbb\u306f\u5c11\u306a\u3044\u4e00\u65b9\u3067\u3001\u7269\u4f53\u8868\u9762\u306e\u5b9f\u6e2c\u8a55\u4fa1\u306f\u307e\u3060\u9650\u5b9a\u7684\u3067\u3059\u3002');
+
+  return {
+    positiveFeatures,
+    detectedIssues,
+    nextObservation: nextObservationForTask(task),
+    reflectionQuestion: task.reflectionQuestion,
+  };
+}
+
+function metricList(feedbackInput) {
+  const entries = Object.entries(feedbackInput.metrics).filter(([, value]) => value !== null);
+  if (!entries.length) {
+    return '<p class="score-note">\u672a\u5b9f\u88c5\u306e\u7269\u7406\u6307\u6a19\u306f\u8a55\u4fa1\u5024\u3068\u3057\u3066\u8868\u793a\u3057\u3066\u3044\u307e\u305b\u3093\u3002</p>';
+  }
+  const labels = {
+    averageIlluminance: '\u5e73\u5747\u7167\u5ea6',
+    minIlluminance: '\u6700\u5c0f\u7167\u5ea6',
+    maxIlluminance: '\u6700\u5927\u7167\u5ea6',
+    uniformity: '\u5747\u6589\u5ea6',
+  };
+  return `
+    <dl class="metric-list">
+      ${entries.map(([key, value]) => `<div><dt>${labels[key] || key}</dt><dd>${Number(value).toFixed(2)}</dd></div>`).join('')}
+    </dl>
+  `;
+}
+
+function nextObservationForTask(task) {
+  const table = {
+    uniform_visibility: '\u6700\u3082\u660e\u308b\u3044\u90e8\u5206\u3068\u6700\u3082\u6697\u3044\u90e8\u5206\u306e\u5dee\u304c\u3001\u5f62\u306e\u8aad\u307f\u3084\u3059\u3055\u3092\u59a8\u3052\u3066\u3044\u306a\u3044\u304b\u898b\u3066\u304f\u3060\u3055\u3044\u3002',
+    shape_emphasis: '\u660e\u308b\u3044\u9762\u3068\u6697\u3044\u9762\u306e\u5dee\u304c\u3001\u51f9\u51f8\u3092\u8aad\u3080\u624b\u304c\u304b\u308a\u306b\u306a\u3063\u3066\u3044\u308b\u304b\u898b\u3066\u304f\u3060\u3055\u3044\u3002',
+    soft_lighting: '\u5f71\u306e\u5883\u754c\u304c\u6025\u306b\u5207\u308a\u66ff\u308f\u3063\u3066\u3044\u306a\u3044\u304b\u3001\u6697\u90e8\u306b\u5f62\u304c\u6b8b\u3063\u3066\u3044\u308b\u304b\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+    background_separation: '\u80cc\u666f\u3068\u8f2a\u90ed\u306e\u660e\u308b\u3055\u306e\u5dee\u306b\u6ce8\u76ee\u3057\u3001\u5916\u5074\u306e\u5f62\u304c\u8ffd\u3048\u308b\u304b\u898b\u3066\u304f\u3060\u3055\u3044\u3002',
+    visual_focus: '\u4e2d\u592e\u4e0a\u90e8\u3068\u5468\u56f2\u306e\u660e\u308b\u3055\u3092\u6bd4\u3079\u3001\u8996\u7dda\u304c\u81ea\u7136\u306b\u96c6\u307e\u308b\u304b\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+  };
+  return table[task.id] || '\u5149\u304c\u7269\u4f53\u8868\u9762\u306b\u3069\u3046\u5c4a\u3044\u3066\u3044\u308b\u304b\u89b3\u5bdf\u3057\u3066\u304f\u3060\u3055\u3044\u3002';
 }
 
 function scoreUniformVisibility(snapshot) {
   const metrics = getSurfaceIlluminanceSummary(snapshot);
+  const lights = activeLights(snapshot);
+  const keyLight = lights[0] || snapshot.lights[0];
   if (metrics) {
     const uniformity = metrics.maxIlluminance > 0 ? metrics.minIlluminance / metrics.maxIlluminance : 0;
     const averageScore = clamp(metrics.averageIlluminance / 500 * 100, 0, 100);
@@ -890,8 +1112,8 @@ function scoreUniformVisibility(snapshot) {
   }
   return clamp(
     balanceScore(snapshot, 'intensity', 420, 180) * 0.55
-      + Math.max(0, 100 - Math.abs(snapshot.lights[0].x - 3) * 12 - Math.abs(snapshot.lights[0].y - 3) * 12) * 0.25
-      + Math.max(0, 100 - Math.abs(snapshot.lights[0].elevation + 35) * 1.2) * 0.2,
+      + Math.max(0, 100 - Math.abs(keyLight.x - 3) * 12 - Math.abs(keyLight.y - 3) * 12) * 0.25
+      + Math.max(0, 100 - Math.abs(keyLight.elevation + 35) * 1.2) * 0.2,
     0,
     100,
   );
@@ -908,9 +1130,10 @@ function scoreShapeEmphasis(snapshot) {
 }
 
 function scoreSoftLighting(snapshot) {
+  const areaLights = activeLights(snapshot).filter((l) => l.kind === 'area');
   return clamp(
     maxKindScore(snapshot, 'area', 'intensity', 720, 260) * 0.35
-      + Math.max(...snapshot.lights.filter((l) => l.kind === 'area').map((l) => clamp((l.width * l.height) / 32 * 100, 0, 100)), 0) * 0.45
+      + Math.max(...areaLights.map((l) => clamp((l.width * l.height) / 32 * 100, 0, 100)), 0) * 0.45
       + Math.max(0, 100 - averageKindValue(snapshot, 'spot', 'intensity') * 0.1) * 0.2,
     0,
     100,
@@ -918,10 +1141,12 @@ function scoreSoftLighting(snapshot) {
 }
 
 function scoreBackgroundSeparation(snapshot) {
+  const lights = activeLights(snapshot);
+  if (!lights.length) return 0;
   return clamp(
-    Math.max(...snapshot.lights.map((l) => l.y < -5 ? 100 : Math.max(0, 100 - (l.y + 5) * 15))) * 0.45
+    Math.max(...lights.map((l) => l.y < -5 ? 100 : Math.max(0, 100 - (l.y + 5) * 15))) * 0.45
       + Math.max(0, 100 - averageIntensity(snapshot) * 0.08) * 0.25
-      + Math.max(...snapshot.lights.map((l) => Math.max(0, 100 - Math.abs(Math.abs(l.azimuth) - 180) * 0.5))) * 0.3,
+      + Math.max(...lights.map((l) => Math.max(0, 100 - Math.abs(Math.abs(l.azimuth) - 180) * 0.5))) * 0.3,
     0,
     100,
   );
@@ -945,11 +1170,13 @@ function getSurfaceIlluminanceSummary(snapshot) {
 }
 
 function hintUniformVisibility(snapshot) {
-  const intensities = snapshot.lights.map((light) => light.intensity);
+  const lights = activeLights(snapshot);
+  const intensities = lights.map((light) => light.intensity);
   const spread = Math.max(...intensities) - Math.min(...intensities);
   return [
+    !lights.length ? '\u70b9\u706f\u3057\u3066\u3044\u308b\u30e9\u30a4\u30c8\u304c\u306a\u304f\u3001\u7269\u4f53\u8868\u9762\u306e\u60c5\u5831\u304c\u78ba\u8a8d\u3057\u306b\u304f\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
     spread > 180 ? '\u30e9\u30a4\u30c8\u5f37\u5ea6\u306e\u5dee\u304c\u5927\u304d\u304f\u3001\u660e\u308b\u3044\u90e8\u5206\u3068\u6697\u3044\u90e8\u5206\u306e\u30e0\u30e9\u304c\u51fa\u3084\u3059\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
-    snapshot.lights.some((light) => light.z < 2) ? '\u4f4e\u3044\u4f4d\u7f6e\u306e\u5149\u304c\u3042\u308a\u3001\u5c40\u6240\u7684\u306a\u5f71\u304c\u51fa\u3084\u3059\u304f\u306a\u3063\u3066\u3044\u307e\u3059\u3002' : '',
+    lights.some((light) => light.z < 2) ? '\u4f4e\u3044\u4f4d\u7f6e\u306e\u5149\u304c\u3042\u308a\u3001\u5c40\u6240\u7684\u306a\u5f71\u304c\u51fa\u3084\u3059\u304f\u306a\u3063\u3066\u3044\u307e\u3059\u3002' : '',
     '\u4f5c\u54c1\u5168\u4f53\u306b\u76ee\u3092\u79fb\u3057\u3001\u6975\u7aef\u306b\u6697\u3044\u9762\u304c\u6b8b\u3063\u3066\u3044\u306a\u3044\u304b\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
   ];
 }
@@ -971,10 +1198,29 @@ function hintSoftLighting(snapshot) {
 }
 
 function hintBackgroundSeparation(snapshot) {
+  const lights = activeLights(snapshot);
   return [
-    snapshot.lights.every((light) => light.y > -2) ? '\u80cc\u9762\u5074\u304b\u3089\u306e\u5149\u304c\u5c11\u306a\u304f\u3001\u8f2a\u90ed\u304c\u80cc\u666f\u306b\u57cb\u3082\u308c\u3084\u3059\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
+    lights.length && lights.every((light) => light.y > -2) ? '\u80cc\u9762\u5074\u304b\u3089\u306e\u5149\u304c\u5c11\u306a\u304f\u3001\u8f2a\u90ed\u304c\u80cc\u666f\u306b\u57cb\u3082\u308c\u3084\u3059\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
     averageKindValue(snapshot, 'spot', 'intensity') + averageKindValue(snapshot, 'area', 'intensity') > 900 ? '\u6b63\u9762\u3084\u5468\u56f2\u304c\u660e\u308b\u304f\u3001\u8f2a\u90ed\u5149\u306e\u5dee\u304c\u8aad\u307f\u306b\u304f\u3044\u72b6\u614b\u3067\u3059\u3002' : '',
     '\u4f5c\u54c1\u306e\u5916\u5074\u306e\u7dda\u304c\u80cc\u666f\u3068\u5206\u304b\u308c\u3066\u898b\u3048\u308b\u304b\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
+  ];
+}
+
+function hintTutorialLightObject(snapshot) {
+  const enabledCount = activeLights(snapshot).length;
+  return [
+    enabledCount === 0 ? '\u307e\u305a\u306f\u5c11\u306a\u304f\u3068\u30821\u3064\u306e\u30e9\u30a4\u30c8\u3092\u70b9\u706f\u3057\u3066\u3001\u7269\u4f53\u306b\u5149\u304c\u5c4a\u304f\u304b\u78ba\u8a8d\u3057\u3066\u307f\u307e\u3057\u3087\u3046\u3002' : '',
+    '\u30e9\u30a4\u30c8\u306e\u5411\u304d\u3092\u5909\u3048\u305f\u3068\u304d\u3001\u660e\u308b\u3044\u9762\u304c\u3069\u3053\u306b\u79fb\u308b\u304b\u898b\u3066\u304f\u3060\u3055\u3044\u3002',
+    '\u64cd\u4f5c\u30ac\u30a4\u30c9\u306f\u5149\u306e\u5411\u304d\u3092\u898b\u308b\u305f\u3081\u306e\u8868\u793a\u3067\u3001\u70b9\u706f\u72b6\u614b\u3068\u306f\u5225\u3067\u3059\u3002',
+  ];
+}
+
+function hintTutorialReduceLight(snapshot) {
+  const enabledCount = activeLights(snapshot).length;
+  return [
+    enabledCount > 1 ? '\u8907\u6570\u306e\u30e9\u30a4\u30c8\u304c\u70b9\u706f\u3057\u3066\u3044\u307e\u3059\u3002\u70b9\u706f\u72b6\u614b\u3068\u5411\u304d\u306e\u3069\u3061\u3089\u304c\u898b\u3048\u65b9\u306b\u52b9\u3044\u3066\u3044\u308b\u304b\u78ba\u8a8d\u3057\u3066\u307f\u307e\u3057\u3087\u3046\u3002' : '',
+    '\u7269\u4f53\u306b\u5f53\u305f\u308b\u5149\u3092\u6e1b\u3089\u3059\u306b\u306f\u3001\u30e9\u30a4\u30c8\u3092\u6d88\u3059\u65b9\u6cd5\u3068\u5411\u304d\u3092\u5916\u3059\u65b9\u6cd5\u304c\u3042\u308a\u307e\u3059\u3002',
+    '\u6697\u304f\u3057\u305f\u3068\u304d\u306b\u3001\u7269\u4f53\u306e\u5f62\u304c\u3069\u3053\u307e\u3067\u8aad\u3081\u308b\u304b\u89b3\u5bdf\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
   ];
 }
 
@@ -1019,8 +1265,8 @@ function critiqueVisualFocus(score) {
 function scoreBars(scores, currentId) {
   return `
     <div class="bars-head">
-      <h2>\u5168\u304a\u984c\u306e\u8a55\u4fa1</h2>
-      <span>\u5408\u683c\u30e9\u30a4\u30f3 ${PASS_SCORE}\u70b9</span>
+      <h2>\u5168\u8ab2\u984c\u306e\u53c2\u8003\u30b9\u30b3\u30a2</h2>
+      <span>\u66ab\u5b9a\u76ee\u6a19 ${PASS_SCORE}\u70b9</span>
     </div>
     <div class="score-bars" role="img" aria-label="\u5168\u304a\u984c\u306e\u6a2a\u68d2\u30b0\u30e9\u30d5">
       ${scores.map((score) => `
@@ -1049,6 +1295,26 @@ function normalizeTaskId(taskId) {
 function normalizeBasicLightColors(lights) {
   if (trainingMode !== 'basic') return lights;
   return lights.map((light) => ({ ...light, color: BASIC_TRAINING_LIGHT_COLOR }));
+}
+
+function createSessionStats() {
+  return {
+    lightMoveCount: 0,
+    intensityChangeCount: 0,
+    directionChangeCount: 0,
+    lightToggleCount: 0,
+    resetCount: 0,
+  };
+}
+
+function updateSessionStats(param) {
+  if (!state.sessionStats) state.sessionStats = createSessionStats();
+  if (['x', 'y', 'z'].includes(param)) state.sessionStats.lightMoveCount += 1;
+  if (param === 'intensity') state.sessionStats.intensityChangeCount += 1;
+  if (['elevation', 'azimuth', 'spread', 'width', 'height', 'kind'].includes(param)) {
+    state.sessionStats.directionChangeCount += 1;
+  }
+  if (param === 'enabled') state.sessionStats.lightToggleCount += 1;
 }
 
 function isLightKindMismatch(entry, data) {
@@ -1119,30 +1385,36 @@ function mapBeamAngle(azimuth) {
 }
 
 function balanceScore(snapshot, key, target, tolerance) {
-  const values = snapshot.lights.map((light) => light[key]);
+  const values = activeLights(snapshot).map((light) => light[key]);
+  if (!values.length) return 0;
   const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
   const spread = Math.max(...values) - Math.min(...values);
   return clamp(100 - Math.abs(avg - target) / tolerance * 40 - spread / tolerance * 55, 0, 100);
 }
 
 function maxKindScore(snapshot, kind, key, target, tolerance) {
-  const values = snapshot.lights.filter((light) => light.kind === kind).map((light) => light[key]);
+  const values = activeLights(snapshot).filter((light) => light.kind === kind).map((light) => light[key]);
   if (!values.length) return 0;
   return clamp(100 - Math.abs(Math.max(...values) - target) / tolerance * 100, 0, 100);
 }
 
 function averageKindValue(snapshot, kind, key) {
-  const values = snapshot.lights.filter((light) => light.kind === kind).map((light) => light[key]);
+  const values = activeLights(snapshot).filter((light) => light.kind === kind).map((light) => light[key]);
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
 }
 
 function minKindValue(snapshot, kind, key) {
-  const values = snapshot.lights.filter((light) => light.kind === kind).map((light) => light[key]);
+  const values = activeLights(snapshot).filter((light) => light.kind === kind).map((light) => light[key]);
   return values.length ? Math.min(...values) : 1;
 }
 
 function averageIntensity(snapshot) {
-  return snapshot.lights.reduce((sum, light) => sum + light.intensity, 0) / snapshot.lights.length;
+  const lights = activeLights(snapshot);
+  return lights.length ? lights.reduce((sum, light) => sum + light.intensity, 0) / lights.length : 0;
+}
+
+function activeLights(snapshot) {
+  return snapshot.lights.filter((light) => light.enabled !== false);
 }
 
 function saturation(hex) {
@@ -1182,11 +1454,13 @@ if (typeof window !== 'undefined') {
     renderFeedback,
     startTask,
     submit,
+    resetLights,
     scoreAllTasks,
     isLightKindMismatch,
     supportCondition,
     legacyTaskIdMap,
     allowLightColorEditing,
     BASIC_TRAINING_LIGHT_COLOR,
+    BASIC_TRAINING_LIGHT_COLOR_LABEL,
   };
 }

@@ -193,16 +193,18 @@ assert(api.isLightKindMismatch({ light: {} }, { kind: 'spot' }) === true, 'Area 
 
 assert(api.state.phase === 'setup', 'initial phase should be setup');
 assert(app.querySelector('#start'), 'start button should exist');
-assert(app.querySelectorAll('.task-choice').length === 5, 'five task choices should exist');
-assert(app.innerHTML.includes('見やすい'), 'setup should show the new uniform visibility label');
-assert(app.innerHTML.includes('立体的'), 'setup should show the new shape emphasis label');
-assert(app.innerHTML.includes('やわらかい'), 'setup should show the new soft lighting label');
-assert(app.innerHTML.includes('くっきり'), 'setup should show the new background separation label');
-assert(app.innerHTML.includes('目を引く'), 'setup should show the new visual focus label');
-assert(app.innerHTML.includes('作品全体に大きな明るさのムラ'), 'setup should show task descriptions');
+assert(app.querySelectorAll('.task-choice').length === 7, 'tutorials plus five task choices should exist');
+assert(app.innerHTML.includes('物体を照らしてみよう'), 'setup should show the first tutorial task');
+assert(app.innerHTML.includes('物体をできるだけ照らさないようにしてみよう'), 'setup should show the second tutorial task');
+assert(app.innerHTML.includes('作品全体を見やすくしよう'), 'setup should show the new uniform visibility title');
+assert(app.innerHTML.includes('作品の形や凹凸を印象的に見せよう'), 'setup should show the new shape emphasis title');
+assert(app.innerHTML.includes('作品をやわらかい印象に見せよう'), 'setup should show the new soft lighting title');
+assert(app.innerHTML.includes('作品の輪郭を背景から際立たせよう'), 'setup should show the new background separation title');
+assert(app.innerHTML.includes('中央上部に注目を集めよう'), 'setup should show the visual focus title');
+assert(app.innerHTML.includes('明るすぎる部分や暗すぎる部分'), 'setup should show revised task descriptions');
 assertAllButtonsAreNonSubmit(app);
 
-app.querySelectorAll('.task-choice')[1].click();
+app.querySelectorAll('.task-choice').find((button) => button.dataset.task === 'shape_emphasis').click();
 assert(api.state.taskId === 'shape_emphasis', 'task card click should select shape emphasis');
 
 app.querySelectorAll('.model-btn')[2].click();
@@ -218,6 +220,9 @@ assert(api.state.phase === 'operation', 'start should move to operation phase');
 assert(app.querySelector('#submit'), 'submit button should exist in operation phase');
 assert(app.querySelectorAll('.tab-btn').length === 3, 'three light tabs should exist');
 assert(app.querySelector('#top-map'), 'top map should exist');
+assert(app.querySelector('#light-enabled'), 'light on/off control should exist');
+assert(app.querySelector('#helper-visible'), 'helper visibility control should exist');
+assert(app.querySelector('#reset-lights'), 'reset lights control should exist');
 assertAllButtonsAreNonSubmit(app);
 
 app.querySelectorAll('.tab-btn')[1].click();
@@ -229,8 +234,19 @@ assert(api.state.lights[1].kind === 'spot', 'type toggle should switch active li
 assert(api.allowLightColorEditing === false, 'basic training should disable light color editing');
 assert(!app.querySelector('#color'), 'color input should be hidden in basic training');
 assert(api.state.lights.every((light) => light.color === api.BASIC_TRAINING_LIGHT_COLOR), 'basic training lights should use fixed white color');
+assert(app.innerHTML.includes(api.BASIC_TRAINING_LIGHT_COLOR_LABEL), 'operation should describe fixed day-white color');
 assert(app.innerHTML.includes('ライト強度'), 'operation should use light-side intensity wording');
 assert(!app.innerHTML.includes('照度</span>'), 'operation should not label light controls as illuminance');
+
+change(app.querySelector('#light-enabled'), false);
+assert(api.state.lights[1].enabled === false, 'light on/off control should update active light enabled state');
+change(app.querySelector('#helper-visible'), false);
+assert(api.state.lights[1].showHelper === false, 'helper visibility control should update active light helper state');
+app.querySelector('#reset-lights').click();
+assert(api.state.activeLight === 0, 'reset should return active light to first light');
+assert(api.state.lights[2].enabled === false, 'reset should restore initial light enabled states');
+assert(api.state.sessionStats.resetCount === 1, 'reset should increment reset count');
+app.querySelectorAll('.tab-btn')[1].click();
 
 const xSlider = app.querySelectorAll('input[type="range"][data-param]').find((slider) => slider.dataset.param === 'x');
 input(xSlider, 6);
@@ -263,10 +279,17 @@ assertAllButtonsAreNonSubmit(app);
 
 const scoreText = app.innerHTML;
 assert(scoreText.includes('/100'), 'feedback score should include /100');
-assert(scoreText.includes('70/100'), 'feedback should explain the passing score');
+assert(scoreText.includes('70/100'), 'feedback should explain the provisional target score');
+assert(scoreText.includes('暫定スコア') || scoreText.includes('暫定目標'), 'feedback should avoid pass/fail wording and show provisional wording');
+assert(!scoreText.includes('PASS') && !scoreText.includes('RETRY') && !scoreText.includes('合格'), 'feedback should not show pass/fail wording');
 assert(scoreText.includes('フィードバック'), 'feedback critique should be separated from operation hints');
+assert(scoreText.includes('良かった点'), 'feedback should have positive-feature section');
+assert(scoreText.includes('主な問題'), 'feedback should have detected-issue section');
+assert(scoreText.includes('次に見るべき点'), 'feedback should have next-observation section');
 assert(scoreText.includes('内省の問い'), 'reflection question should be separated from score result');
 assert(app.querySelector('.score-bar-row'), 'score bar rows should exist');
+assert(api.state.result.feedbackInput.metrics.highlightClippingRate === null, 'unimplemented physical metrics should remain null');
+assert(api.state.history.some((entry) => entry.param === 'decision' && entry.actionSummary), 'decision log should include action summary');
 const feedbackHandle = app.querySelector('.feedback-drag-handle');
 feedbackHandle.dispatchEvent({ type: 'pointerdown', target: feedbackHandle, clientX: 20, clientY: 20, pointerId: 3 });
 feedbackHandle.dispatchEvent({ type: 'pointermove', target: feedbackHandle, clientX: 70, clientY: 45, pointerId: 3 });
