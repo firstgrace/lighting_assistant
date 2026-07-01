@@ -191,6 +191,71 @@ assert(api.isLightKindMismatch({ light: {} }, { kind: 'area' }) === false, 'Rect
 assert(api.isLightKindMismatch({ light: { isSpotLight: true } }, { kind: 'spot' }) === false, 'SpotLight should match spot data');
 assert(api.isLightKindMismatch({ light: {} }, { kind: 'spot' }) === true, 'Area light should rebuild when data switches to spot');
 
+const summary = api.summarizeIlluminanceSamples([
+  { position: {}, normal: {}, illuminance: 10, valid: true },
+  { position: {}, normal: {}, illuminance: 20, valid: true },
+  { position: {}, normal: {}, illuminance: 40, valid: true },
+]);
+assert(summary.averageIlluminance === 70 / 3, 'summary should calculate average illuminance');
+assert(summary.minIlluminance === 10, 'summary should calculate minimum illuminance');
+assert(summary.maxIlluminance === 40, 'summary should calculate maximum illuminance');
+assert(summary.percentile10Illuminance === 12, 'summary should calculate interpolated 10th percentile illuminance');
+assert(Math.abs(summary.uniformity - (12 / (70 / 3))) < 0.000001, 'summary should calculate p10 over average uniformity');
+assert(summary.validSampleCount === 3 && summary.totalSampleCount === 3, 'summary should count valid samples');
+
+const filteredSummary = api.summarizeIlluminanceSamples([
+  { position: {}, normal: {}, illuminance: 30, valid: true },
+  { position: {}, normal: {}, illuminance: Number.NaN, valid: true },
+  { position: {}, normal: {}, illuminance: Number.POSITIVE_INFINITY, valid: true },
+  { position: {}, normal: {}, illuminance: -1, valid: true },
+  { position: {}, normal: {}, illuminance: 99, valid: false },
+]);
+assert(filteredSummary.averageIlluminance === 30, 'summary should ignore invalid illuminance values');
+assert(filteredSummary.validSampleCount === 1 && filteredSummary.totalSampleCount === 5, 'summary should retain total sample count');
+
+const emptySummary = api.summarizeIlluminanceSamples([]);
+assert(emptySummary.averageIlluminance === null, 'empty summary average should be null');
+assert(emptySummary.minIlluminance === null, 'empty summary minimum should be null');
+assert(emptySummary.maxIlluminance === null, 'empty summary maximum should be null');
+assert(emptySummary.uniformity === null, 'empty summary uniformity should be null');
+assert(emptySummary.validSampleCount === 0 && emptySummary.totalSampleCount === 0, 'empty summary should have zero samples');
+
+const zeroSummary = api.summarizeIlluminanceSamples([
+  { position: {}, normal: {}, illuminance: 0, valid: true },
+  { position: {}, normal: {}, illuminance: 0, valid: true },
+]);
+assert(zeroSummary.uniformity === 0, 'all-zero summary should not produce NaN uniformity');
+assert(zeroSummary.uniformity >= 0 && zeroSummary.uniformity <= 1, 'uniformity should stay in the 0-1 range');
+const singleZeroOutlierSummary = api.summarizeIlluminanceSamples([
+  { position: {}, normal: {}, illuminance: 0, valid: true },
+  ...Array.from({ length: 10 }, () => ({ position: {}, normal: {}, illuminance: 100, valid: true })),
+]);
+assert(singleZeroOutlierSummary.percentile10Illuminance > 0, 'a single zero sample should not force p10 illuminance to zero');
+assert(singleZeroOutlierSummary.uniformity > 0, 'a single zero sample should not force uniformity to zero');
+
+const allOffSamples = api.generateSurfaceMeasurementPoints('abstract').map((sample) => ({
+  ...sample,
+  illuminance: api.calculateDirectIlluminanceAtSample(sample, api.state.lights.map((light) => ({ ...light, enabled: false }))),
+}));
+const allOffSummary = api.summarizeIlluminanceSamples(allOffSamples);
+assert(allOffSummary.averageIlluminance === 0, 'all lights off should produce zero average illuminance without throwing');
+
+const uniformTask = api.tasks.find((task) => task.id === 'uniform_visibility');
+const shapeTask = api.tasks.find((task) => task.id === 'shape_emphasis');
+const directEvaluation = api.evaluateTask(uniformTask, { ...api.state, surfaceIlluminanceSummary: summary });
+assert(directEvaluation.evaluationSource === 'direct_illuminance', 'uniform visibility should use direct illuminance when summary exists');
+assert(Number.isFinite(directEvaluation.visibilityBreakdown.legacyScore), 'direct evaluation should retain legacy score');
+assert(Number.isFinite(directEvaluation.visibilityBreakdown.directScore), 'direct evaluation should calculate diagnostic direct score');
+assert(directEvaluation.score === Math.round(directEvaluation.visibilityBreakdown.legacyScore * 0.7 + directEvaluation.visibilityBreakdown.directScore * 0.3), 'uniform score should combine legacy score with at most 30 percent direct illuminance score');
+const fallbackEvaluation = api.evaluateTask(uniformTask, { ...api.state, surfaceIlluminanceSummary: emptySummary });
+assert(fallbackEvaluation.evaluationSource === 'legacy', 'uniform visibility should fall back to legacy without valid summary');
+const shapeEvaluation = api.evaluateTask(shapeTask, { ...api.state, surfaceIlluminanceSummary: summary });
+assert(shapeEvaluation.evaluationSource === 'legacy', 'other tasks should keep legacy evaluation');
+['shape_emphasis', 'soft_lighting', 'background_separation', 'visual_focus'].forEach((taskId) => {
+  const task = api.tasks.find((item) => item.id === taskId);
+  assert(api.evaluateTask(task, { ...api.state, surfaceIlluminanceSummary: summary }).evaluationSource === 'legacy', `${taskId} should not use direct illuminance evaluation yet`);
+});
+
 assert(api.state.phase === 'setup', 'initial phase should be setup');
 assert(app.querySelector('#start'), 'start button should exist');
 assert(app.querySelectorAll('.task-choice').length === 7, 'tutorials plus five task choices should exist');
@@ -203,6 +268,24 @@ assert(app.innerHTML.includes('作品の輪郭を背景から際立たせよう'
 assert(app.innerHTML.includes('中央上部に注目を集めよう'), 'setup should show the visual focus title');
 assert(app.innerHTML.includes('明るすぎる部分や暗すぎる部分'), 'setup should show revised task descriptions');
 assertAllButtonsAreNonSubmit(app);
+
+app.querySelectorAll('.task-choice').find((button) => button.dataset.task === 'uniform_visibility').click();
+app.querySelector('#start').click();
+assert(app.querySelector('#surface-samples-visible'), 'surface sample debug toggle should exist');
+assert(app.querySelector('#surface-samples-visible').checked === false, 'surface sample debug toggle should be off by default');
+change(app.querySelector('#surface-samples-visible'), true);
+assert(api.state.showSurfaceSamples === true, 'surface sample debug toggle should update state');
+app.querySelector('#submit').click();
+assert(api.state.result.feedbackInput.evaluationSource === 'direct_illuminance', 'uniform feedback input should use direct illuminance source');
+assert(api.state.result.feedbackInput.metrics.validSampleCount > 0, 'uniform feedback input should include valid sample count');
+assert(api.state.result.feedbackInput.metrics.highlightClippingRate === null, 'highlight clipping metric should remain null');
+assert(api.state.history.some((entry) => entry.param === 'decision' && entry.evaluationSource === 'direct_illuminance' && entry.illuminanceSummary), 'decision log should include illuminance summary and source');
+assert(!app.innerHTML.includes('NaN'), 'feedback should not show NaN');
+assert(!app.innerHTML.includes('undefined'), 'feedback should not show undefined');
+assert(!app.innerHTML.includes('null lx'), 'feedback should not show null lx');
+assert(!app.innerHTML.includes(' lx'), 'relative illuminance should not be labeled as lx');
+app.querySelector('#new-task').click();
+assert(api.state.phase === 'setup', 'new task should return to setup after uniform feedback check');
 
 app.querySelectorAll('.task-choice').find((button) => button.dataset.task === 'shape_emphasis').click();
 assert(api.state.taskId === 'shape_emphasis', 'task card click should select shape emphasis');
@@ -275,6 +358,7 @@ assert(api.state.phase === 'feedback', 'submit should move to feedback phase');
 assert(app.querySelector('#retry'), 'retry should exist in feedback phase');
 assert(app.querySelector('#next-task'), 'next task should exist in feedback phase');
 assert(app.querySelector('.score-bars-panel'), 'score bars panel should exist in feedback phase');
+assert(app.querySelector('.feedback-screen').classList.contains('is-scrollable'), 'feedback screen should have scrollable class');
 assertAllButtonsAreNonSubmit(app);
 
 const scoreText = app.innerHTML;
