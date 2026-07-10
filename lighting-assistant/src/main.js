@@ -1,3 +1,13 @@
+import {
+  clearSubmissions,
+  deleteSubmission,
+  exportSubmissionsJson,
+  getSubmissionById,
+  importSubmissionsJson,
+  loadSubmissions,
+  saveSubmission,
+} from './dataStore.js';
+
 let THREE = null;
 let RectAreaLightUniformsLib = null;
 let scene = createFallbackScene();
@@ -223,12 +233,14 @@ const state = {
   uniformVisibilityEvaluation: null,
   camera: { theta: -38, phi: 54, radius: 9.2, view: 'free' },
   feedbackPosition: { x: 0, y: 0 },
-  admin: { authenticated: false, passcodeInput: '', selectedSubmissionId: '', error: '' },
+  persistenceMessage: '',
+  admin: { authenticated: false, passcodeInput: '', selectedSubmissionId: '', error: '', message: '', importText: '' },
   result: null,
 };
 
 const app = document.querySelector('#app');
 initializeParticipant();
+syncSubmissionsFromStore();
 
 class LightingScene {
   constructor() {
@@ -763,6 +775,7 @@ function renderFeedback() {
         </div>
         <div class="feedback-body">
           <div class="score-panel">
+            ${state.persistenceMessage ? `<p class="admin-error">${escapeHtml(state.persistenceMessage)}</p>` : ''}
             ${showScoreResult(result)}
             ${showPerformanceCritique(result)}
             ${showReflectionQuestion(result)}
@@ -813,8 +826,20 @@ function renderAdminView() {
         </header>
         ${state.admin.authenticated ? `
           <div class="admin-actions">
+            <button type="button" class="secondary-btn" id="export-all-submissions">\u5168\u4ef6JSON\u30a8\u30af\u30b9\u30dd\u30fc\u30c8</button>
             <button type="button" class="secondary-btn" id="download-all-submissions">\u5168\u4ef6JSON\u4fdd\u5b58</button>
+            <button type="button" class="secondary-btn danger-btn" id="clear-submissions">\u5168\u4ef6\u524a\u9664</button>
           </div>
+          <section class="admin-import">
+            <label class="form-row">
+              <span>JSON\u30a4\u30f3\u30dd\u30fc\u30c8</span>
+              <textarea id="admin-import-json" rows="4" placeholder="submissions JSON">${escapeHtml(state.admin.importText)}</textarea>
+            </label>
+            <button type="button" class="secondary-btn" id="import-submissions">JSON\u3092\u8aad\u307f\u8fbc\u3080</button>
+          </section>
+          ${state.admin.message ? `<p class="admin-message">${escapeHtml(state.admin.message)}</p>` : ''}
+          ${state.admin.error ? `<p class="admin-error">${escapeHtml(state.admin.error)}</p>` : ''}
+          ${state.persistenceMessage ? `<p class="admin-error">${escapeHtml(state.persistenceMessage)}</p>` : ''}
           <div class="admin-grid">
             ${renderSubmissionList(submissions)}
             ${renderSubmissionDetail(selected)}
@@ -875,7 +900,10 @@ function renderSubmissionDetail(submission) {
     <section class="admin-detail">
       <div class="admin-detail-head">
         <h2>${escapeHtml(submission.submissionId)}</h2>
-        <button type="button" class="secondary-btn" id="download-single-submission" data-submission-id="${escapeHtml(submission.submissionId)}">1\u4ef6JSON\u4fdd\u5b58</button>
+        <div class="admin-detail-actions">
+          <button type="button" class="secondary-btn" id="download-single-submission" data-submission-id="${escapeHtml(submission.submissionId)}">1\u4ef6JSON\u4fdd\u5b58</button>
+          <button type="button" class="secondary-btn danger-btn" id="delete-single-submission" data-submission-id="${escapeHtml(submission.submissionId)}">1\u4ef6\u524a\u9664</button>
+        </div>
       </div>
       ${renderAdminImages(submission.submissionImages || [])}
       ${adminJsonBlock('systemDiagnostics', submission.systemDiagnostics)}
@@ -947,7 +975,16 @@ function bindAdminView() {
   app.querySelector('#download-single-submission')?.addEventListener('click', (event) => {
     downloadSingleSubmissionJson(event.target.dataset.submissionId);
   });
+  app.querySelector('#delete-single-submission')?.addEventListener('click', (event) => {
+    deleteSingleSubmission(event.target.dataset.submissionId);
+  });
+  app.querySelector('#export-all-submissions')?.addEventListener('click', exportAllSubmissionsJson);
   app.querySelector('#download-all-submissions')?.addEventListener('click', downloadAllSubmissionsJson);
+  app.querySelector('#clear-submissions')?.addEventListener('click', clearAllSubmissionData);
+  app.querySelector('#admin-import-json')?.addEventListener('input', (event) => {
+    state.admin.importText = event.target.value;
+  });
+  app.querySelector('#import-submissions')?.addEventListener('click', importAdminSubmissionsJson);
 }
 
 function verifyAdminPasscode(value) {
@@ -955,6 +992,33 @@ function verifyAdminPasscode(value) {
 }
 
 function getSubmissionStore() {
+  syncSubmissionsFromStore();
+  return state.submissions;
+}
+
+function syncSubmissionsFromStore() {
+  const stored = loadSubmissions();
+  if (!stored.length) return state.submissions;
+  state.submissions = mergeSubmissions(stored, state.submissions);
+  if (!state.admin.selectedSubmissionId && state.submissions[0]) {
+    state.admin.selectedSubmissionId = state.submissions[0].submissionId;
+  }
+  return state.submissions;
+}
+
+function mergeSubmissions(...groups) {
+  const merged = new Map();
+  groups.flat().forEach((submission) => {
+    if (submission?.submissionId) merged.set(submission.submissionId, sanitizeSubmissionRecord(submission));
+  });
+  return [...merged.values()];
+}
+
+function replaceSubmissionStore(submissions) {
+  state.submissions = submissions.map((submission) => sanitizeSubmissionRecord(submission));
+  if (!state.submissions.some((item) => item.submissionId === state.admin.selectedSubmissionId)) {
+    state.admin.selectedSubmissionId = state.submissions[0]?.submissionId || '';
+  }
   return state.submissions;
 }
 
@@ -971,6 +1035,64 @@ function downloadSingleSubmissionJson(submissionId) {
 
 function downloadAllSubmissionsJson() {
   return downloadJsonPayload('submissions.json', getSubmissionStore().map((item) => sanitizeSubmissionRecord(item)));
+}
+
+function exportAllSubmissionsJson() {
+  const persisted = JSON.parse(exportSubmissionsJson());
+  const merged = mergeSubmissions(persisted, state.submissions);
+  return downloadJsonPayload('submissions-export.json', merged);
+}
+
+function importAdminSubmissionsJson() {
+  const result = importSubmissionsJson(state.admin.importText);
+  if (result.ok) {
+    replaceSubmissionStore(result.submissions);
+    state.admin.message = `${result.submissions.length}\u4ef6\u306esubmission\u3092\u8aad\u307f\u8fbc\u307f\u307e\u3057\u305f\u3002`;
+    state.admin.error = '';
+    state.admin.importText = '';
+  } else {
+    state.admin.error = result.error || 'JSON\u30a4\u30f3\u30dd\u30fc\u30c8\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002';
+  }
+  renderAdminView();
+  return result;
+}
+
+function deleteSingleSubmission(submissionId) {
+  if (!submissionId) return { ok: false, error: 'submissionId is required.', submissions: getSubmissionStore() };
+  if (!confirmAdminAction('1\u4ef6\u306esubmission\u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f')) {
+    return { ok: false, error: 'cancelled', submissions: getSubmissionStore() };
+  }
+  const result = deleteSubmission(submissionId);
+  if (result.ok) {
+    replaceSubmissionStore(result.submissions);
+    state.admin.message = '1\u4ef6\u306esubmission\u3092\u524a\u9664\u3057\u307e\u3057\u305f\u3002';
+    state.admin.error = '';
+  } else {
+    state.admin.error = result.error || 'submission\u306e\u524a\u9664\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002';
+  }
+  renderAdminView();
+  return result;
+}
+
+function clearAllSubmissionData() {
+  if (!confirmAdminAction('\u3059\u3079\u3066\u306esubmission\u3092\u524a\u9664\u3057\u307e\u3059\u304b\uff1f')) {
+    return { ok: false, error: 'cancelled', submissions: getSubmissionStore() };
+  }
+  const result = clearSubmissions();
+  if (result.ok) {
+    replaceSubmissionStore([]);
+    state.admin.message = '\u3059\u3079\u3066\u306esubmission\u3092\u524a\u9664\u3057\u307e\u3057\u305f\u3002';
+    state.admin.error = '';
+  } else {
+    state.admin.error = result.error || 'submission\u306e\u5168\u4ef6\u524a\u9664\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002';
+  }
+  renderAdminView();
+  return result;
+}
+
+function confirmAdminAction(message) {
+  if (typeof window === 'undefined' || typeof window.confirm !== 'function') return true;
+  return window.confirm(message);
 }
 
 function downloadJsonPayload(filename, payload) {
@@ -1638,6 +1760,8 @@ function updateUserImpression(next) {
   if (submission) {
     submission.userImpression = clone(state.result.userImpression);
     submission.analysisFlags = buildAnalysisFlags(submission.userImpression, submission.submissionImages);
+    const saveResult = saveSubmission(submission);
+    state.persistenceMessage = saveResult.ok ? '' : `${saveResult.error} この提出は画面上には残っています。JSON保存で退避してください。`;
     state.result.submission = submission;
   }
 }
@@ -2323,12 +2447,15 @@ function appendSubmissionToLog(submissionRecord) {
   } else {
     state.submissions.push(sanitized);
   }
+  const saveResult = saveSubmission(sanitized);
+  state.persistenceMessage = saveResult.ok ? '' : `${saveResult.error} この提出は画面上には残っています。JSON保存で退避してください。`;
   return sanitized;
 }
 
 function downloadSubmissionJson() {
   if (!state.result) return null;
   const submission = state.submissions.find((item) => item.submissionId === state.result.submissionId)
+    || getSubmissionById(state.result.submissionId)
     || appendSubmissionToLog(buildSubmissionRecord(currentTask(), state.result));
   const json = JSON.stringify(sanitizeSubmissionRecord(submission), null, 2);
   if (typeof document === 'undefined' || typeof document.createElement !== 'function' || typeof URL === 'undefined' || typeof Blob === 'undefined') {
@@ -2648,12 +2775,23 @@ if (typeof window !== 'undefined') {
     sanitizeSubmissionRecord,
     appendSubmissionToLog,
     downloadSubmissionJson,
+    saveSubmission,
+    loadSubmissions,
+    getSubmissionById,
+    deleteSubmission,
+    clearSubmissions,
+    exportSubmissionsJson,
+    importSubmissionsJson,
     verifyAdminPasscode,
     renderAdminView,
     renderSubmissionList,
     renderSubmissionDetail,
     downloadSingleSubmissionJson,
     downloadAllSubmissionsJson,
+    exportAllSubmissionsJson,
+    importAdminSubmissionsJson,
+    deleteSingleSubmission,
+    clearAllSubmissionData,
     getFixedCameraViews,
     captureSubmissionImages,
     captureView,

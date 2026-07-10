@@ -352,6 +352,11 @@ button {
   background: transparent;
 }
 
+.danger-btn {
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+}
+
 .ghost-btn {
   min-height: 36px;
   background: rgba(255, 255, 255, 0.04);
@@ -1084,6 +1089,7 @@ button {
 
 .admin-head,
 .admin-actions,
+.admin-import,
 .admin-login,
 .admin-list,
 .admin-detail {
@@ -1108,9 +1114,26 @@ button {
 
 .admin-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   justify-content: flex-end;
   margin-top: 12px;
   padding: 12px;
+}
+
+.admin-import {
+  margin-top: 12px;
+  padding: 12px;
+}
+
+.admin-import .secondary-btn {
+  margin-top: 10px;
+}
+
+.admin-message {
+  margin: 10px 0 0;
+  color: var(--accent);
+  font-size: 13px;
 }
 
 .admin-login {
@@ -1173,6 +1196,13 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.admin-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .admin-block {
