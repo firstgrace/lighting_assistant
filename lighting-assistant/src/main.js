@@ -27,6 +27,33 @@ const EMPTY_ILLUMINANCE_SUMMARY = Object.freeze({
   totalSampleCount: 0,
 });
 const SURFACE_SAMPLE_OFFSET = 0.035;
+const reasonTagOptions = [
+  '\u660e\u308b\u3055\u304c\u3061\u3087\u3046\u3069\u3088\u3044',
+  '\u660e\u308b\u3059\u304e\u308b',
+  '\u6697\u3059\u304e\u308b',
+  '\u5f62\u304c\u5206\u304b\u308a\u3084\u3059\u3044',
+  '\u5f62\u304c\u5206\u304b\u308a\u306b\u304f\u3044',
+  '\u8f2a\u90ed\u304c\u5206\u304b\u308a\u3084\u3059\u3044',
+  '\u8f2a\u90ed\u304c\u5206\u304b\u308a\u306b\u304f\u3044',
+  '\u5f71\u304c\u81ea\u7136',
+  '\u5f71\u304c\u5f37\u3059\u304e\u308b',
+  '\u5e73\u5766\u306b\u898b\u3048\u308b',
+  '\u307e\u3076\u3057\u3044',
+  '\u305d\u306e\u4ed6',
+];
+const impressionTagOptions = [
+  '\u898b\u3084\u3059\u3044',
+  '\u7acb\u4f53\u7684',
+  '\u3084\u308f\u3089\u304b\u3044',
+  '\u304f\u3063\u304d\u308a',
+  '\u76ee\u3092\u5f15\u304f',
+  '\u795e\u79d8\u7684',
+  '\u843d\u3061\u7740\u304f',
+  '\u7dca\u5f35\u611f\u304c\u3042\u308b',
+  '\u6696\u304b\u3044',
+  '\u51b7\u305f\u3044',
+  '\u305d\u306e\u4ed6',
+];
 const trainingMode = 'basic';
 const allowLightColorEditing = trainingMode !== 'basic';
 
@@ -81,7 +108,7 @@ const mainTasks = [
     legacyIds: ['flat'],
     label: '\u4f5c\u54c1\u5168\u4f53\u3092\u898b\u3084\u3059\u304f\u3057\u3088\u3046',
     shortLabel: '\u898b\u3084\u3059\u3044',
-    description: '\u660e\u308b\u3059\u304e\u308b\u90e8\u5206\u3084\u6697\u3059\u304e\u308b\u90e8\u5206\u3092\u6291\u3048\u3001\u4f5c\u54c1\u5168\u4f53\u306e\u5f62\u304c\u5206\u304b\u308b\u7167\u660e\u3092\u3064\u304f\u308a\u307e\u3059\u3002',
+    description: '\u3042\u306a\u305f\u304c\u300c\u898b\u3084\u3059\u3044\u300d\u3068\u611f\u3058\u308b\u7167\u660e\u3092\u4f5c\u3063\u3066\u304f\u3060\u3055\u3044\u3002\u70b9\u6570\u3067\u306f\u306a\u304f\u3001\u81ea\u5206\u304c\u753b\u9762\u3092\u898b\u3066\u3069\u3046\u611f\u3058\u308b\u304b\u3092\u57fa\u6e96\u306b\u8abf\u6574\u3057\u3066\u304f\u3060\u3055\u3044\u3002',
     learningPoints: ['\u7167\u5ea6\u5206\u5e03', '\u5747\u6589\u5ea6', '\u8907\u6570\u706f\u306e\u30d0\u30e9\u30f3\u30b9'],
     internalEvaluationName: '\u5168\u4f53\u306e\u660e\u77ad\u6027',
     candidateMetrics: ['\u5e73\u5747\u7167\u5ea6', '\u6700\u5c0f\u30fb\u6700\u5927\u7167\u5ea6', '\u5747\u6589\u5ea6'],
@@ -177,6 +204,9 @@ const state = {
   phase: 'setup',
   taskId: 'tutorial_light_object',
   modelId: 'abstract',
+  participantId: '',
+  sessionId: '',
+  submissions: [],
   assist: { hint: true, feedback: true },
   activeLight: 0,
   lights: clone(defaultLights),
@@ -194,6 +224,7 @@ const state = {
 };
 
 const app = document.querySelector('#app');
+initializeParticipant();
 
 class LightingScene {
   constructor() {
@@ -202,7 +233,7 @@ class LightingScene {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x15161a);
     this.camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
-    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -213,6 +244,7 @@ class LightingScene {
     this.markers = [];
     this.modelGroup = new THREE.Group();
     this.surfaceSampleGroup = new THREE.Group();
+    this.surfaceSampleGroup.userData.excludeFromCapture = true;
 
     this.buildStage();
     this.setModel(state.modelId);
@@ -253,6 +285,7 @@ class LightingScene {
     const grid = new THREE.GridHelper(20, 20, 0x8a8f9c, 0x3b3d43);
     grid.material.opacity = 0.18;
     grid.material.transparent = true;
+    grid.userData.excludeFromCapture = true;
     this.scene.add(grid);
     this.scene.add(new THREE.HemisphereLight(0x9aa3b5, 0x111317, 0.28));
     this.scene.add(this.modelGroup);
@@ -372,8 +405,13 @@ class LightingScene {
       const dot = new THREE.Mesh(geometry, material);
       dot.position.set(p.x, p.z, p.y);
       dot.userData.ignoreForEvaluation = true;
+      dot.userData.excludeFromCapture = true;
       this.surfaceSampleGroup.add(dot);
     });
+  }
+
+  getCaptureRoot() {
+    return this.scene;
   }
 
   updateCamera(cameraState) {
@@ -394,6 +432,41 @@ class LightingScene {
       Math.cos(theta) * Math.sin(phi) * r,
     );
     this.camera.lookAt(0, 1.55, 0);
+  }
+
+  getCameraPose() {
+    const direction = new THREE.Vector3();
+    this.camera.getWorldDirection(direction);
+    const target = this.camera.position.clone().add(direction.multiplyScalar(Math.max(state.camera.radius, 1)));
+    return {
+      cameraPosition: finiteVector({
+        x: this.camera.position.x,
+        y: this.camera.position.y,
+        z: this.camera.position.z,
+      }),
+      cameraTarget: finiteVector({
+        x: target.x,
+        y: target.y,
+        z: target.z,
+      }),
+    };
+  }
+
+  captureView(viewConfig) {
+    if (viewConfig.viewId !== 'user_view') {
+      this.camera.up.set(0, 1, 0);
+      this.camera.position.set(viewConfig.cameraPosition.x, viewConfig.cameraPosition.y, viewConfig.cameraPosition.z);
+      this.camera.lookAt(viewConfig.cameraTarget.x, viewConfig.cameraTarget.y, viewConfig.cameraTarget.z);
+      this.camera.updateProjectionMatrix();
+    }
+    this.renderer.render(this.scene, this.camera);
+    const pose = viewConfig.viewId === 'user_view' ? this.getCameraPose() : viewConfig;
+    return {
+      viewId: viewConfig.viewId,
+      dataUrl: safeCanvasDataUrl(this.renderer.domElement),
+      cameraPosition: finiteVector(pose.cameraPosition),
+      cameraTarget: finiteVector(pose.cameraTarget),
+    };
   }
 
   resize() {
@@ -441,6 +514,18 @@ function createFallbackScene() {
     updateCamera: drawFallbackCanvas,
     updateLights: drawFallbackCanvas,
     updateSurfaceSamples: () => {},
+    getCameraPose: () => deriveCameraPoseFromState(state.camera),
+    getCaptureRoot: () => null,
+    captureView: (viewConfig) => {
+      drawFallbackCanvas();
+      const pose = viewConfig.viewId === 'user_view' ? deriveCameraPoseFromState(state.camera) : viewConfig;
+      return {
+        viewId: viewConfig.viewId,
+        dataUrl: safeCanvasDataUrl(document.querySelector('#scene')),
+        cameraPosition: finiteVector(pose.cameraPosition),
+        cameraTarget: finiteVector(pose.cameraTarget),
+      };
+    },
   };
 }
 
@@ -506,6 +591,10 @@ function renderSetup() {
         <aside class="setup-side">
           <div class="setting-panel">
             <h2 class="panel-title">\u652f\u63f4\u8a2d\u5b9a</h2>
+            <label class="participant-row">
+              <span>participantId</span>
+              <input id="participant-id" type="text" value="${state.participantId}" placeholder="anonymous" autocomplete="off" />
+            </label>
             ${switchRow('hint-toggle', '\u30d2\u30f3\u30c8', state.assist.hint)}
             ${switchRow('feedback-toggle', '\u30d5\u30a3\u30fc\u30c9\u30d0\u30c3\u30af', state.assist.feedback)}
           </div>
@@ -544,6 +633,9 @@ function renderSetup() {
   });
   app.querySelector('#feedback-toggle').addEventListener('change', (event) => {
     state.assist.feedback = event.target.checked;
+  });
+  app.querySelector('#participant-id').addEventListener('input', (event) => {
+    state.participantId = event.target.value.trim();
   });
   app.querySelector('#start').addEventListener('click', startTask);
 }
@@ -666,6 +758,8 @@ function renderFeedback() {
             ${showScoreResult(result)}
             ${showPerformanceCritique(result)}
             ${showReflectionQuestion(result)}
+            ${renderUserImpressionForm(result.userImpression)}
+            ${renderSubmissionImagesPreview(result.submissionImages)}
           </div>
           ${supportCondition.showScoreAfterDecision ? `<div class="score-bars-panel">${scoreBars(result.allScores, state.taskId)}</div>` : ''}
         </div>
@@ -690,6 +784,7 @@ function renderFeedback() {
     renderSetup();
   });
   bindFeedbackDrag();
+  bindUserImpressionForm();
   applyFeedbackPosition();
 }
 
@@ -886,6 +981,8 @@ function startTask() {
   state.phase = 'operation';
   state.activeLight = 0;
   state.taskId = normalizeTaskId(state.taskId);
+  if (!state.participantId) state.participantId = generateAnonymousParticipantId();
+  if (!state.sessionId) state.sessionId = generateSessionId();
   state.lights = normalizeBasicLightColors(clone(defaultLights));
   state.history = [];
   state.startedAt = performance.now();
@@ -913,21 +1010,31 @@ function resetLights() {
 function submit() {
   const task = currentTask();
   updateDerivedIlluminance();
+  const submissionId = generateSubmissionId();
+  const createdAt = new Date().toISOString();
   const allScores = scoreAllTasks(state);
   const currentScore = allScores.find((score) => score.id === state.taskId);
   const current = task.scoreEnabled === false ? null : currentScore?.score ?? 0;
   const feedbackInput = buildFeedbackInput(task, current, allScores, state);
+  const submissionImages = captureSubmissionImages();
   state.result = {
+    submissionId,
+    createdAt,
     current,
     targetReached: current === null ? null : current >= PASS_SCORE,
     allScores,
     feedbackInput,
     feedback: buildRuleBasedFeedback(task, current, state, feedbackInput),
     provisionalNote: task.provisionalEvaluation,
+    userImpression: createEmptyUserImpression(),
+    submissionImages,
   };
   state.history.push({
-    at: new Date().toISOString(),
+    at: createdAt,
     elapsed: (performance.now() - state.startedAt) / 1000,
+    participantId: state.participantId,
+    sessionId: state.sessionId,
+    submissionId,
     taskId: state.taskId,
     param: 'decision',
     value: current,
@@ -936,8 +1043,11 @@ function submit() {
     illuminanceSummary: clone(feedbackInput.illuminanceSummary),
     actionSummary: clone(state.sessionStats),
     internalEvaluationValues: feedbackInput.metrics,
+    submissionImages: clone(submissionImages),
     lights: clone(state.lights),
   });
+  const submission = buildSubmission(task, state.result);
+  state.submissions.push(submission);
   state.phase = 'feedback';
   render();
 }
@@ -1021,6 +1131,89 @@ function setView(view) {
   scene.updateCamera(state.camera);
 }
 
+function getFixedCameraViews() {
+  const bounds = getSubjectCaptureBounds(state.modelId);
+  const center = bounds.center;
+  const height = bounds.height;
+  const distance = height * 3;
+  const standardY = center.y + height * 0.3;
+  const upperY = center.y + height;
+  return [
+    { viewId: 'user_view', ...scene.getCameraPose() },
+    {
+      viewId: 'front',
+      cameraPosition: finiteVector({ x: center.x, y: standardY, z: center.z + distance }),
+      cameraTarget: finiteVector(center),
+    },
+    {
+      viewId: 'left_45',
+      cameraPosition: finiteVector({ x: center.x - distance * 0.7071, y: standardY, z: center.z + distance * 0.7071 }),
+      cameraTarget: finiteVector(center),
+    },
+    {
+      viewId: 'right_45',
+      cameraPosition: finiteVector({ x: center.x + distance * 0.7071, y: standardY, z: center.z + distance * 0.7071 }),
+      cameraTarget: finiteVector(center),
+    },
+    {
+      viewId: 'upper_front',
+      cameraPosition: finiteVector({ x: center.x, y: upperY, z: center.z + distance * 0.78 }),
+      cameraTarget: finiteVector(center),
+    },
+  ];
+}
+
+function captureSubmissionImages() {
+  const userCamera = clone(state.camera);
+  try {
+    return withCleanCaptureScene(() => getFixedCameraViews().map((viewConfig) => captureView(viewConfig)));
+  } finally {
+    restoreUserCamera(userCamera);
+  }
+}
+
+function captureView(viewConfig) {
+  const captured = scene.captureView(viewConfig);
+  return {
+    viewId: String(captured.viewId || viewConfig.viewId),
+    dataUrl: validDataUrl(captured.dataUrl) ? captured.dataUrl : transparentPixelDataUrl(),
+    cameraPosition: finiteVector(captured.cameraPosition),
+    cameraTarget: finiteVector(captured.cameraTarget),
+  };
+}
+
+function restoreUserCamera(cameraState = state.camera) {
+  state.camera = clone(cameraState);
+  scene.updateCamera(state.camera);
+}
+
+function withCleanCaptureScene(callback) {
+  const hiddenRecords = hideCaptureExcludedObjects(scene.getCaptureRoot?.());
+  try {
+    return callback();
+  } finally {
+    restoreCaptureExcludedObjects(hiddenRecords);
+  }
+}
+
+function hideCaptureExcludedObjects(root) {
+  const records = [];
+  if (!root?.traverse) return records;
+  root.traverse((object) => {
+    if (object?.userData?.excludeFromCapture === true) {
+      records.push({ object, visible: object.visible !== false });
+      object.visible = false;
+    }
+  });
+  return records;
+}
+
+function restoreCaptureExcludedObjects(records = []) {
+  records.forEach((record) => {
+    if (record?.object) record.object.visible = record.visible;
+  });
+}
+
 function showHint(task, snapshot) {
   if (!state.assist.hint || !supportCondition.showHintsDuringOperation) {
     return ['\u73fe\u5728\u306e\u8a2d\u5b9a\u3067\u306f\u64cd\u4f5c\u4e2d\u306e\u30d2\u30f3\u30c8\u3092\u8868\u793a\u3057\u307e\u305b\u3093\u3002'];
@@ -1043,15 +1236,15 @@ function showScoreResult(result) {
     ? `<strong>${result.current}<span>/100\u70b9</span></strong>`
     : '<strong>--<span>/100\u70b9</span></strong>';
   const targetMarkup = supportCondition.showPassFailAfterDecision
-    ? `<span class="score-state">${result.targetReached ? '\u66ab\u5b9a\u76ee\u6a19\u306b\u5230\u9054' : '\u66ab\u5b9a\u76ee\u6a19\u307e\u3067\u3042\u3068\u5c11\u3057'}</span>`
-    : '<span class="score-state">\u66ab\u5b9a\u30b9\u30b3\u30a2</span>';
+    ? `<span class="score-state">${result.targetReached ? '\u53c2\u8003\u8a3a\u65ad\u3067\u306f\u9ad8\u3081' : '\u53c2\u8003\u8a3a\u65ad\u3067\u306f\u63a7\u3048\u3081'}</span>`
+    : '<span class="score-state">\u53c2\u8003\u8a3a\u65ad</span>';
   const metricsMarkup = metricList(result.feedbackInput);
   return `
     <div class="score-line">
       ${targetMarkup}
       ${scoreMarkup}
     </div>
-    <p class="pass-line">\u66ab\u5b9a\u76ee\u6a19: ${PASS_SCORE}/100\u70b9</p>
+    <p class="pass-line">\u8a3a\u65ad\u306e\u76ee\u5b89: ${PASS_SCORE}/100\u70b9</p>
     <p class="score-note">\u5185\u90e8\u8a55\u4fa1: ${currentTask().internalEvaluationName}</p>
     ${metricsMarkup}
     <p class="provisional-note">${result.provisionalNote}</p>
@@ -1077,6 +1270,155 @@ function showPerformanceCritique(result) {
 function showReflectionQuestion(result) {
   if (!supportCondition.showReflectionQuestionAfterDecision) return '';
   return `<section class="reflection-block"><h2>\u5185\u7701\u306e\u554f\u3044</h2><p>${result.feedback.reflectionQuestion}</p></section>`;
+}
+
+function renderUserImpressionForm(userImpression) {
+  const impression = userImpression || createEmptyUserImpression();
+  return `
+    <section class="impression-form">
+      <h2>\u3042\u306a\u305f\u306e\u898b\u3048\u65b9</h2>
+      <label class="form-row">
+        <span>\u3053\u306e\u7167\u660e\u306f\u898b\u3084\u3059\u3044\u3068\u601d\u3044\u307e\u3059\u304b\uff1f</span>
+        <select id="visibility-rating">
+          ${ratingOptions(impression.visibilityRating)}
+        </select>
+      </label>
+      <fieldset class="tag-fieldset">
+        <legend>\u7406\u7531</legend>
+        <div class="tag-options">
+          ${reasonTagOptions.map((tag) => `
+            <label class="tag-check">
+              <input type="checkbox" name="reason-tags" value="${tag}" ${impression.reasonTags.includes(tag) ? 'checked' : ''} />
+              <span>${tag}</span>
+            </label>
+          `).join('')}
+        </div>
+      </fieldset>
+      <fieldset class="tag-fieldset">
+        <legend>\u611f\u3058\u305f\u5370\u8c61</legend>
+        <div class="tag-options">
+          ${impressionTagOptions.map((tag) => `
+            <label class="tag-check">
+              <input type="checkbox" name="impression-tags" value="${tag}" ${impression.impressionTags.includes(tag) ? 'checked' : ''} />
+              <span>${tag}</span>
+            </label>
+          `).join('')}
+        </div>
+      </fieldset>
+      <label class="form-row">
+        <span>\u4ee3\u8868\u7684\u306a\u5370\u8c61</span>
+        <select id="primary-impression">
+          <option value="">--</option>
+          ${impressionTagOptions.map((tag) => `<option value="${tag}" ${impression.primaryImpression === tag ? 'selected' : ''}>${tag}</option>`).join('')}
+        </select>
+      </label>
+      <label class="form-row">
+        <span>\u30b3\u30e1\u30f3\u30c8</span>
+        <textarea id="impression-comment" rows="3">${escapeHtml(impression.comment)}</textarea>
+      </label>
+      <label class="form-row">
+        <span>\u81ea\u4fe1\u5ea6</span>
+        <select id="impression-confidence">
+          ${ratingOptions(impression.confidence)}
+        </select>
+      </label>
+    </section>
+  `;
+}
+
+function renderSubmissionImagesPreview(images = []) {
+  if (!images.length) {
+    return `
+      <section class="submission-images-preview">
+        <h2>\u4fdd\u5b58\u3055\u308c\u305f\u8996\u70b9\u753b\u50cf</h2>
+        <p class="score-note">\u4fdd\u5b58\u3055\u308c\u305f\u8996\u70b9\u753b\u50cf\u306f\u3042\u308a\u307e\u305b\u3093</p>
+      </section>
+    `;
+  }
+  return `
+    <section class="submission-images-preview">
+      <h2>\u4fdd\u5b58\u3055\u308c\u305f\u8996\u70b9\u753b\u50cf</h2>
+      <div class="submission-image-grid">
+        ${images.map((image) => `
+          <article class="submission-image-card">
+            <h3>${escapeHtml(image.viewId || '')}</h3>
+            <img src="${validDataUrl(image.dataUrl) ? image.dataUrl : transparentPixelDataUrl()}" alt="${escapeHtml(image.viewId || '')}" />
+            <dl>
+              <div><dt>cameraPosition</dt><dd>${formatVectorForDisplay(image.cameraPosition)}</dd></div>
+              <div><dt>cameraTarget</dt><dd>${formatVectorForDisplay(image.cameraTarget)}</dd></div>
+            </dl>
+          </article>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function formatVectorForDisplay(vector) {
+  const safe = finiteVector(vector);
+  return `x:${formatCoordinate(safe.x)} y:${formatCoordinate(safe.y)} z:${formatCoordinate(safe.z)}`;
+}
+
+function formatCoordinate(value) {
+  return Number.isFinite(value) ? value.toFixed(2) : '0.00';
+}
+
+function ratingOptions(selected) {
+  return `<option value="">--</option>${[1, 2, 3, 4, 5].map((value) => (
+    `<option value="${value}" ${Number(selected) === value ? 'selected' : ''}>${value}</option>`
+  )).join('')}`;
+}
+
+function bindUserImpressionForm() {
+  const form = app.querySelector('.impression-form');
+  if (!form || !state.result) return;
+  const sync = () => {
+    const visibilityRating = nullableFormNumber(app.querySelector('#visibility-rating')?.value);
+    const confidence = nullableFormNumber(app.querySelector('#impression-confidence')?.value);
+    const reasonTags = app.querySelectorAll('input[name="reason-tags"]')
+      .filter((input) => input.checked)
+      .map((input) => input.value);
+    const impressionTags = app.querySelectorAll('input[name="impression-tags"]')
+      .filter((input) => input.checked)
+      .map((input) => input.value);
+    const primaryImpression = app.querySelector('#primary-impression')?.value || '';
+    const comment = app.querySelector('#impression-comment')?.value || '';
+    updateUserImpression({ visibilityRating, reasonTags, impressionTags, primaryImpression, comment, confidence });
+  };
+  app.querySelector('#visibility-rating')?.addEventListener('change', sync);
+  app.querySelector('#impression-confidence')?.addEventListener('change', sync);
+  app.querySelector('#impression-comment')?.addEventListener('input', sync);
+  app.querySelector('#primary-impression')?.addEventListener('change', sync);
+  app.querySelectorAll('input[name="reason-tags"]').forEach((input) => {
+    input.addEventListener('change', sync);
+  });
+  app.querySelectorAll('input[name="impression-tags"]').forEach((input) => {
+    input.addEventListener('change', sync);
+  });
+}
+
+function updateUserImpression(next) {
+  if (!state.result) return;
+  state.result.userImpression = {
+    ...createEmptyUserImpression(),
+    ...state.result.userImpression,
+    ...next,
+  };
+  const submission = state.submissions.find((item) => item.submissionId === state.result.submissionId);
+  if (submission) {
+    submission.userImpression = clone(state.result.userImpression);
+  }
+}
+
+function createEmptyUserImpression() {
+  return {
+    visibilityRating: null,
+    reasonTags: [],
+    impressionTags: [],
+    primaryImpression: '',
+    comment: '',
+    confidence: null,
+  };
 }
 
 function scoreAllTasks(snapshot) {
@@ -1161,7 +1503,7 @@ function buildRuleBasedFeedback(task, score, snapshot, feedbackInput) {
   if (feedbackInput.actionSummary.lightMoveCount > 2) positiveFeatures.push('\u914d\u7f6e\u3092\u52d5\u304b\u3057\u3066\u3001\u5149\u306e\u5f53\u305f\u308a\u65b9\u306e\u5909\u5316\u3092\u63a2\u308c\u3066\u3044\u307e\u3059\u3002');
   if (!positiveFeatures.length) positiveFeatures.push('\u6700\u7d42\u72b6\u614b\u3068\u8ab2\u984c\u306e\u95a2\u4fc2\u3092\u78ba\u8a8d\u3067\u304d\u308b\u8a2d\u5b9a\u304c\u4f5c\u3089\u308c\u3066\u3044\u307e\u3059\u3002');
 
-  if (score < PASS_SCORE) detectedIssues.push('\u66ab\u5b9a\u30b9\u30b3\u30a2\u306f\u76ee\u6a19\u3088\u308a\u4f4e\u304f\u3001\u898b\u3048\u65b9\u306e\u7279\u5fb4\u304c\u307e\u3060\u5f31\u3044\u72b6\u614b\u3067\u3059\u3002');
+  if (score < PASS_SCORE) detectedIssues.push('\u53c2\u8003\u8a3a\u65ad\u3067\u306f\u63a7\u3048\u3081\u306b\u51fa\u3066\u3044\u307e\u3059\u3002\u753b\u9762\u4e0a\u3067\u3069\u306e\u90e8\u5206\u304c\u898b\u3084\u3059\u3044\u304b\u3001\u307e\u305f\u306f\u898b\u3065\u3089\u3044\u304b\u3092\u78ba\u8a8d\u3057\u3066\u307f\u3066\u304f\u3060\u3055\u3044\u3002');
   if (active.length === 0) detectedIssues.push('\u70b9\u706f\u3057\u3066\u3044\u308b\u30e9\u30a4\u30c8\u304c\u306a\u304f\u3001\u7269\u4f53\u8868\u9762\u306e\u60c5\u5831\u304c\u8aad\u307f\u306b\u304f\u3044\u72b6\u614b\u3067\u3059\u3002');
   if (!detectedIssues.length) detectedIssues.push('\u5927\u304d\u306a\u7834\u7dbb\u306f\u5c11\u306a\u3044\u4e00\u65b9\u3067\u3001\u7269\u4f53\u8868\u9762\u306e\u5b9f\u6e2c\u8a55\u4fa1\u306f\u307e\u3060\u9650\u5b9a\u7684\u3067\u3059\u3002');
 
@@ -1603,8 +1945,8 @@ function critiqueVisualFocus(score) {
 function scoreBars(scores, currentId) {
   return `
     <div class="bars-head">
-      <h2>\u5168\u8ab2\u984c\u306e\u53c2\u8003\u30b9\u30b3\u30a2</h2>
-      <span>\u66ab\u5b9a\u76ee\u6a19 ${PASS_SCORE}\u70b9</span>
+      <h2>\u5168\u8ab2\u984c\u306e\u30b7\u30b9\u30c6\u30e0\u8a3a\u65ad</h2>
+      <span>\u8a3a\u65ad\u306e\u76ee\u5b89 ${PASS_SCORE}\u70b9</span>
     </div>
     <div class="score-bars" role="img" aria-label="\u5168\u304a\u984c\u306e\u6a2a\u68d2\u30b0\u30e9\u30d5">
       ${scores.map((score) => `
@@ -1624,6 +1966,63 @@ function scoreBars(scores, currentId) {
 function currentTask() {
   state.taskId = normalizeTaskId(state.taskId);
   return tasks.find((task) => task.id === state.taskId) || tasks[0];
+}
+
+function initializeParticipant() {
+  state.participantId = getParticipantIdFromUrl() || '';
+}
+
+function getParticipantIdFromUrl() {
+  if (typeof window === 'undefined' || !window.location?.search) return '';
+  try {
+    return new URLSearchParams(window.location.search).get('participant')?.trim() || '';
+  } catch {
+    return '';
+  }
+}
+
+function generateAnonymousParticipantId() {
+  return `anonymous-${randomIdPart()}`;
+}
+
+function generateSessionId() {
+  return `session-${Date.now().toString(36)}-${randomIdPart()}`;
+}
+
+function generateSubmissionId() {
+  return `submission-${Date.now().toString(36)}-${randomIdPart()}`;
+}
+
+function buildSubmission(task, result) {
+  return {
+    participantId: state.participantId,
+    sessionId: state.sessionId,
+    submissionId: result.submissionId,
+    createdAt: result.createdAt,
+    taskId: task.id,
+    taskTitle: task.label,
+    modelId: state.modelId,
+    lights: clone(state.lights),
+    submissionImages: clone(result.submissionImages || []),
+    diagnostic: {
+      value: result.current,
+      guideValue: PASS_SCORE,
+      allDiagnostics: clone(result.allScores),
+      feedbackInput: clone(result.feedbackInput),
+      feedback: clone(result.feedback),
+    },
+    userImpression: clone(result.userImpression || createEmptyUserImpression()),
+    operationHistory: clone(state.history),
+  };
+}
+
+function getSubjectCaptureBounds(modelId) {
+  const table = {
+    abstract: { center: { x: 0, y: 1.7, z: 0 }, height: 2 },
+    bust: { center: { x: 0, y: 1.75, z: 0 }, height: 2.7 },
+    figure: { center: { x: 0, y: 1.75, z: 0 }, height: 3.1 },
+  };
+  return table[modelId] || table.abstract;
 }
 
 function normalizeTaskId(taskId) {
@@ -1678,6 +2077,7 @@ function createLightMarker(light, active) {
   }
   const marker = new THREE.Mesh(geometry, material);
   marker.userData.kind = light.kind;
+  marker.userData.excludeFromCapture = true;
   return marker;
 }
 
@@ -1755,6 +2155,56 @@ function activeLights(snapshot) {
   return snapshot.lights.filter((light) => light.enabled !== false);
 }
 
+function deriveCameraPoseFromState(cameraState) {
+  const r = Number.isFinite(cameraState.radius) ? cameraState.radius : 9.2;
+  if (cameraState.view === 'top') {
+    return {
+      cameraPosition: finiteVector({ x: 0, y: r + 1.55, z: 0 }),
+      cameraTarget: finiteVector({ x: 0, y: 1.55, z: 0 }),
+    };
+  }
+  const theta = degToRad(Number.isFinite(cameraState.theta) ? cameraState.theta : -38);
+  const phi = degToRad(clamp(Number.isFinite(cameraState.phi) ? cameraState.phi : 54, 6, 84));
+  return {
+    cameraPosition: finiteVector({
+      x: Math.sin(theta) * Math.sin(phi) * r,
+      y: Math.cos(phi) * r + 1.4,
+      z: Math.cos(theta) * Math.sin(phi) * r,
+    }),
+    cameraTarget: finiteVector({ x: 0, y: 1.55, z: 0 }),
+  };
+}
+
+function safeCanvasDataUrl(canvas) {
+  try {
+    if (canvas?.toDataURL) return canvas.toDataURL('image/jpeg', 0.82);
+  } catch {
+    // Cross-origin or context failures fall back to a tiny transparent PNG.
+  }
+  return transparentPixelDataUrl();
+}
+
+function validDataUrl(value) {
+  return typeof value === 'string' && /^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(value);
+}
+
+function transparentPixelDataUrl() {
+  return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+}
+
+function finiteVector(vector) {
+  return {
+    x: finiteNumber(vector?.x),
+    y: finiteNumber(vector?.y),
+    z: finiteNumber(vector?.z),
+  };
+}
+
+function finiteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
 function preferredRangeScore(value, min, max) {
   if (!Number.isFinite(value)) return 0;
   if (value >= min && value <= max) return 100;
@@ -1795,6 +2245,20 @@ function nullableNumber(value) {
   return Number(value);
 }
 
+function nullableFormNumber(value) {
+  if (value === '' || value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
 function saturation(hex) {
   const rgb = hex.replace('#', '').match(/.{1,2}/g).map((part) => parseInt(part, 16) / 255);
   const max = Math.max(...rgb);
@@ -1818,6 +2282,13 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function randomIdPart() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID().slice(0, 8);
+  }
+  return Math.random().toString(36).slice(2, 10);
+}
+
 if (typeof window !== 'undefined') {
   window.__lightingAssistant = {
     get state() {
@@ -1839,6 +2310,19 @@ if (typeof window !== 'undefined') {
     generateSurfaceMeasurementPoints,
     summarizeIlluminanceSamples,
     calculateDirectIlluminanceAtSample,
+    initializeParticipant,
+    getParticipantIdFromUrl,
+    generateAnonymousParticipantId,
+    generateSessionId,
+    generateSubmissionId,
+    buildSubmission,
+    getFixedCameraViews,
+    captureSubmissionImages,
+    captureView,
+    restoreUserCamera,
+    hideCaptureExcludedObjects,
+    restoreCaptureExcludedObjects,
+    withCleanCaptureScene,
     isLightKindMismatch,
     supportCondition,
     legacyTaskIdMap,

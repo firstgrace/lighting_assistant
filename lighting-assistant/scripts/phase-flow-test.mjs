@@ -91,6 +91,10 @@ class MockDocument {
 }
 
 class MockCanvas extends MockElement {
+  toDataURL() {
+    return 'data:image/jpeg;base64,phaseflowmock';
+  }
+
   getContext() {
     return {
       setTransform() {},
@@ -177,6 +181,7 @@ globalThis.window = {
   innerHeight: 800,
   devicePixelRatio: 1,
   __LIGHTING_ASSISTANT_SKIP_3D__: true,
+  location: { search: '?participant=P001' },
   addEventListener() {},
 };
 globalThis.console = console;
@@ -256,8 +261,33 @@ assert(shapeEvaluation.evaluationSource === 'legacy', 'other tasks should keep l
   assert(api.evaluateTask(task, { ...api.state, surfaceIlluminanceSummary: summary }).evaluationSource === 'legacy', `${taskId} should not use direct illuminance evaluation yet`);
 });
 
+const excludedVisible = { visible: true, userData: { excludeFromCapture: true } };
+const excludedHidden = { visible: false, userData: { excludeFromCapture: true } };
+const includedVisible = { visible: true, userData: {} };
+const fakeCaptureRoot = {
+  traverse(callback) {
+    [excludedVisible, excludedHidden, includedVisible].forEach(callback);
+  },
+};
+const hiddenRecords = api.hideCaptureExcludedObjects(fakeCaptureRoot);
+assert(excludedVisible.visible === false, 'capture excluded visible object should be hidden during capture');
+assert(excludedHidden.visible === false, 'capture excluded hidden object should stay hidden during capture');
+assert(includedVisible.visible === true, 'non-excluded object should remain visible during capture');
+assert(hiddenRecords.length === 2, 'hideCaptureExcludedObjects should record excluded objects');
+api.restoreCaptureExcludedObjects(hiddenRecords);
+assert(excludedVisible.visible === true, 'capture excluded visible object should be restored after capture');
+assert(excludedHidden.visible === false, 'capture excluded hidden object should restore to hidden after capture');
+assert(includedVisible.visible === true, 'non-excluded object should remain unchanged after restore');
+excludedVisible.visible = true;
+const wrapperRecords = api.hideCaptureExcludedObjects(fakeCaptureRoot);
+assert(excludedVisible.visible === false, 'capture wrapper setup should hide excluded objects');
+api.restoreCaptureExcludedObjects(wrapperRecords);
+assert(excludedVisible.visible === true, 'capture wrapper cleanup should restore excluded objects');
+
 assert(api.state.phase === 'setup', 'initial phase should be setup');
 assert(app.querySelector('#start'), 'start button should exist');
+assert(api.state.participantId === 'P001', 'participant id should initialize from URL query');
+assert(app.querySelector('#participant-id').value === 'P001', 'participant input should show URL participant id');
 assert(app.querySelectorAll('.task-choice').length === 7, 'tutorials plus five task choices should exist');
 assert(app.innerHTML.includes('物体を照らしてみよう'), 'setup should show the first tutorial task');
 assert(app.innerHTML.includes('物体をできるだけ照らさないようにしてみよう'), 'setup should show the second tutorial task');
@@ -266,20 +296,74 @@ assert(app.innerHTML.includes('作品の形や凹凸を印象的に見せよう'
 assert(app.innerHTML.includes('作品をやわらかい印象に見せよう'), 'setup should show the new soft lighting title');
 assert(app.innerHTML.includes('作品の輪郭を背景から際立たせよう'), 'setup should show the new background separation title');
 assert(app.innerHTML.includes('中央上部に注目を集めよう'), 'setup should show the visual focus title');
-assert(app.innerHTML.includes('明るすぎる部分や暗すぎる部分'), 'setup should show revised task descriptions');
+assert(app.innerHTML.includes('自分が画面を見てどう感じるか'), 'setup should show the participant-centered visibility prompt');
 assertAllButtonsAreNonSubmit(app);
 
 app.querySelectorAll('.task-choice').find((button) => button.dataset.task === 'uniform_visibility').click();
+input(app.querySelector('#participant-id'), '');
 app.querySelector('#start').click();
+assert(api.state.participantId.startsWith('anonymous-'), 'empty participant id should generate anonymous id on start');
+assert(api.state.sessionId.startsWith('session-'), 'session id should be generated on start');
 assert(app.querySelector('#surface-samples-visible'), 'surface sample debug toggle should exist');
 assert(app.querySelector('#surface-samples-visible').checked === false, 'surface sample debug toggle should be off by default');
 change(app.querySelector('#surface-samples-visible'), true);
 assert(api.state.showSurfaceSamples === true, 'surface sample debug toggle should update state');
+api.state.camera = { theta: 23, phi: 48, radius: 8.4, view: 'free' };
 app.querySelector('#submit').click();
+assert(api.state.camera.theta === 23 && api.state.camera.phi === 48 && api.state.camera.radius === 8.4, 'submission capture should restore user camera state');
 assert(api.state.result.feedbackInput.evaluationSource === 'direct_illuminance', 'uniform feedback input should use direct illuminance source');
 assert(api.state.result.feedbackInput.metrics.validSampleCount > 0, 'uniform feedback input should include valid sample count');
 assert(api.state.result.feedbackInput.metrics.highlightClippingRate === null, 'highlight clipping metric should remain null');
+assert(api.state.result.submissionId.startsWith('submission-'), 'submission id should be generated on submit');
+assert(api.state.result.createdAt, 'submission createdAt should be set');
+assert(api.state.submissions.length === 1, 'submission should be stored in memory');
+assert(api.state.submissions[0].participantId === api.state.participantId, 'submission should include participant id');
+assert(api.state.submissions[0].sessionId === api.state.sessionId, 'submission should include session id');
+assert(api.state.submissions[0].submissionId === api.state.result.submissionId, 'submission should include submission id');
+assert(api.state.submissions[0].createdAt === api.state.result.createdAt, 'submission should include createdAt');
+const expectedViewIds = ['user_view', 'front', 'left_45', 'right_45', 'upper_front'];
+assert(api.state.result.submissionImages.length === 5, 'result should include five submission images');
+assert(api.state.submissions[0].submissionImages.length === 5, 'stored submission should include five submission images');
+assert(expectedViewIds.every((viewId) => api.state.result.submissionImages.some((image) => image.viewId === viewId)), 'submission images should include all required view ids');
+assert(app.querySelector('.submission-images-preview'), 'submission images preview should exist');
+assert(app.querySelectorAll('.submission-image-card').length === 5, 'submission images preview should render five cards');
+assert(expectedViewIds.every((viewId) => app.innerHTML.includes(viewId)), 'submission images preview should show all required view ids');
+api.state.result.submissionImages.forEach((image) => {
+  assert(image.dataUrl.startsWith('data:image/'), `image ${image.viewId} should have a data URL`);
+  ['cameraPosition', 'cameraTarget'].forEach((key) => {
+    assert(Number.isFinite(image[key].x), `${image.viewId} ${key}.x should be finite`);
+    assert(Number.isFinite(image[key].y), `${image.viewId} ${key}.y should be finite`);
+    assert(Number.isFinite(image[key].z), `${image.viewId} ${key}.z should be finite`);
+  });
+});
+assert(api.state.submissions[0].userImpression.visibilityRating === null, 'empty self evaluation should save null visibility rating');
+assert(Array.isArray(api.state.submissions[0].userImpression.reasonTags), 'empty self evaluation should save reason tags array');
+assert(Array.isArray(api.state.submissions[0].userImpression.impressionTags), 'empty self evaluation should save impression tags array');
+assert(api.state.submissions[0].userImpression.primaryImpression === '', 'empty self evaluation should save empty primary impression');
 assert(api.state.history.some((entry) => entry.param === 'decision' && entry.evaluationSource === 'direct_illuminance' && entry.illuminanceSummary), 'decision log should include illuminance summary and source');
+assert(app.querySelector('#visibility-rating'), 'visibility rating select should exist');
+assert(app.querySelector('#impression-confidence'), 'confidence select should exist');
+assert(app.querySelector('#impression-comment'), 'comment textarea should exist');
+const reasonTag = app.querySelectorAll('input[name="reason-tags"]').find((inputElement) => inputElement.value === '形が分かりやすい');
+assert(reasonTag, 'reason tag checkbox should exist');
+const impressionTag = app.querySelectorAll('input[name="impression-tags"]').find((inputElement) => inputElement.value === '見やすい');
+assert(impressionTag, 'impression tag checkbox should exist');
+assert(app.querySelector('#primary-impression'), 'primary impression select should exist');
+changeValue(app.querySelector('#visibility-rating'), 4);
+change(reasonTag, true);
+change(impressionTag, true);
+changeValue(app.querySelector('#primary-impression'), '見やすい');
+input(app.querySelector('#impression-comment'), '見やすさを確認した');
+changeValue(app.querySelector('#impression-confidence'), 3);
+assert(api.state.result.userImpression.visibilityRating === 4, 'visibility rating should update result user impression');
+assert(api.state.result.userImpression.reasonTags.includes('形が分かりやすい'), 'reason tag should update result user impression');
+assert(api.state.result.userImpression.impressionTags.includes('見やすい'), 'impression tag should update result user impression');
+assert(api.state.result.userImpression.primaryImpression === '見やすい', 'primary impression should update result user impression');
+assert(api.state.result.userImpression.comment === '見やすさを確認した', 'comment should update result user impression');
+assert(api.state.result.userImpression.confidence === 3, 'confidence should update result user impression');
+assert(api.state.submissions[0].userImpression.visibilityRating === 4, 'visibility rating should update stored submission');
+assert(api.state.submissions[0].userImpression.impressionTags.includes('見やすい'), 'impression tag should update stored submission');
+assert(api.state.submissions[0].userImpression.primaryImpression === '見やすい', 'primary impression should update stored submission');
 assert(!app.innerHTML.includes('NaN'), 'feedback should not show NaN');
 assert(!app.innerHTML.includes('undefined'), 'feedback should not show undefined');
 assert(!app.innerHTML.includes('null lx'), 'feedback should not show null lx');
@@ -363,9 +447,9 @@ assertAllButtonsAreNonSubmit(app);
 
 const scoreText = app.innerHTML;
 assert(scoreText.includes('/100'), 'feedback score should include /100');
-assert(scoreText.includes('70/100'), 'feedback should explain the provisional target score');
-assert(scoreText.includes('暫定スコア') || scoreText.includes('暫定目標'), 'feedback should avoid pass/fail wording and show provisional wording');
-assert(!scoreText.includes('PASS') && !scoreText.includes('RETRY') && !scoreText.includes('合格'), 'feedback should not show pass/fail wording');
+assert(scoreText.includes('70/100'), 'feedback should explain the diagnostic guide value');
+assert(scoreText.includes('参考診断') || scoreText.includes('診断の目安'), 'feedback should use diagnostic wording');
+assert(!scoreText.includes('PASS') && !scoreText.includes('RETRY') && !scoreText.includes('合格') && !scoreText.includes('目標到達'), 'feedback should not show pass/fail wording');
 assert(scoreText.includes('フィードバック'), 'feedback critique should be separated from operation hints');
 assert(scoreText.includes('良かった点'), 'feedback should have positive-feature section');
 assert(scoreText.includes('主な問題'), 'feedback should have detected-issue section');
