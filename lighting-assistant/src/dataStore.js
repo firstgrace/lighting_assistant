@@ -3,16 +3,10 @@ const STORAGE_KEY = 'lighting-assistant-submissions-v1';
 export function saveSubmission(submission) {
   try {
     const sanitized = sanitizeJsonValue(submission);
-    if (!sanitized?.submissionId) {
+    if (!isSubmissionRecord(sanitized)) {
       return { ok: false, error: 'submissionId is required.', submissions: loadSubmissions() };
     }
-    const submissions = loadSubmissions();
-    const index = submissions.findIndex((item) => item.submissionId === sanitized.submissionId);
-    if (index >= 0) {
-      submissions[index] = sanitized;
-    } else {
-      submissions.push(sanitized);
-    }
+    const submissions = mergeSubmissions(loadSubmissions(), [sanitized]);
     writeSubmissions(submissions);
     return { ok: true, submission: sanitized, submissions };
   } catch (error) {
@@ -29,8 +23,7 @@ export function loadSubmissions() {
   try {
     const raw = storage()?.getItem(STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return normalizeSubmissionArray(parsed);
+    return normalizeSubmissionArray(JSON.parse(raw));
   } catch {
     return [];
   }
@@ -65,13 +58,33 @@ export function exportSubmissionsJson() {
 
 export function importSubmissionsJson(json) {
   try {
+    if (typeof json === 'string') {
+      const trimmed = json.trim();
+      if (!trimmed) {
+        return { ok: false, importedCount: 0, error: 'JSON本文またはJSONファイルを指定してください。', submissions: loadSubmissions() };
+      }
+      if (looksLikeJsonFilename(trimmed)) {
+        return {
+          ok: false,
+          importedCount: 0,
+          error: 'ファイル名ではなくJSON本文を貼り付けるか、JSONファイルを選択してください。',
+          submissions: loadSubmissions(),
+        };
+      }
+    }
     const parsed = typeof json === 'string' ? JSON.parse(json) : json;
-    const submissions = normalizeSubmissionArray(parsed);
+    const imported = normalizeSubmissionArray(parsed);
+    // Imported records replace existing records with the same submissionId.
+    const submissions = mergeSubmissions(loadSubmissions(), imported);
     writeSubmissions(submissions);
-    return { ok: true, submissions };
+    return { ok: true, importedCount: imported.length, submissions };
   } catch (error) {
-    return { ok: false, error: storageErrorMessage(error), submissions: loadSubmissions() };
+    return { ok: false, importedCount: 0, error: storageErrorMessage(error), submissions: loadSubmissions() };
   }
+}
+
+export function isSubmissionRecord(value) {
+  return value && typeof value === 'object' && typeof value.submissionId === 'string';
 }
 
 function writeSubmissions(submissions) {
@@ -81,17 +94,25 @@ function writeSubmissions(submissions) {
 }
 
 function normalizeSubmissionArray(value) {
-  const source = Array.isArray(value) ? value : value?.submissions;
+  const source = isSubmissionRecord(value) ? [value] : Array.isArray(value) ? value : value?.submissions;
   if (!Array.isArray(source)) return [];
   const seen = new Set();
   return source
     .map((item) => sanitizeJsonValue(item))
-    .filter((item) => item && typeof item === 'object' && item.submissionId)
+    .filter((item) => isSubmissionRecord(item))
     .filter((item) => {
       if (seen.has(item.submissionId)) return false;
       seen.add(item.submissionId);
       return true;
     });
+}
+
+function mergeSubmissions(existing, imported) {
+  const merged = new Map();
+  [...existing, ...imported].forEach((submission) => {
+    if (isSubmissionRecord(submission)) merged.set(submission.submissionId, sanitizeJsonValue(submission));
+  });
+  return [...merged.values()];
 }
 
 function sanitizeJsonValue(value) {
@@ -104,11 +125,18 @@ function sanitizeJsonValue(value) {
   return value;
 }
 
+function looksLikeJsonFilename(value) {
+  return /^[^{}\[\]\n\r]+\.json$/i.test(value);
+}
+
 function storage() {
   return typeof localStorage === 'undefined' ? null : localStorage;
 }
 
 function storageErrorMessage(error) {
+  if (error instanceof SyntaxError) {
+    return 'JSONとして読み込めませんでした。JSON本文を確認してください。';
+  }
   if (error?.name === 'QuotaExceededError') {
     return 'ブラウザ内保存の容量を超えました。全件JSONエクスポートまたは1件JSON保存で退避してください。';
   }

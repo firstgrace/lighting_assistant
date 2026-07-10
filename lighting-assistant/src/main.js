@@ -4,6 +4,7 @@ import {
   exportSubmissionsJson,
   getSubmissionById,
   importSubmissionsJson,
+  isSubmissionRecord,
   loadSubmissions,
   saveSubmission,
 } from './dataStore.js';
@@ -835,6 +836,10 @@ function renderAdminView() {
               <span>JSON\u30a4\u30f3\u30dd\u30fc\u30c8</span>
               <textarea id="admin-import-json" rows="4" placeholder="submissions JSON">${escapeHtml(state.admin.importText)}</textarea>
             </label>
+            <label class="form-row">
+              <span>JSON\u30d5\u30a1\u30a4\u30eb</span>
+              <input id="admin-import-file" type="file" accept=".json,application/json" />
+            </label>
             <button type="button" class="secondary-btn" id="import-submissions">JSON\u3092\u8aad\u307f\u8fbc\u3080</button>
           </section>
           ${state.admin.message ? `<p class="admin-message">${escapeHtml(state.admin.message)}</p>` : ''}
@@ -984,7 +989,8 @@ function bindAdminView() {
   app.querySelector('#admin-import-json')?.addEventListener('input', (event) => {
     state.admin.importText = event.target.value;
   });
-  app.querySelector('#import-submissions')?.addEventListener('click', importAdminSubmissionsJson);
+  app.querySelector('#import-submissions')?.addEventListener('click', () => importAdminSubmissionsJson());
+  app.querySelector('#admin-import-file')?.addEventListener('change', importAdminSubmissionsFile);
 }
 
 function verifyAdminPasscode(value) {
@@ -1043,18 +1049,45 @@ function exportAllSubmissionsJson() {
   return downloadJsonPayload('submissions-export.json', merged);
 }
 
-function importAdminSubmissionsJson() {
-  const result = importSubmissionsJson(state.admin.importText);
+function importAdminSubmissionsJson(jsonText = state.admin.importText) {
+  const result = importSubmissionsJson(jsonText);
   if (result.ok) {
     replaceSubmissionStore(result.submissions);
-    state.admin.message = `${result.submissions.length}\u4ef6\u306esubmission\u3092\u8aad\u307f\u8fbc\u307f\u307e\u3057\u305f\u3002`;
+    state.admin.message = `${result.importedCount ?? result.submissions.length}\u4ef6\u306esubmission\u3092\u8aad\u307f\u8fbc\u307f\u307e\u3057\u305f\u3002`;
     state.admin.error = '';
     state.admin.importText = '';
   } else {
     state.admin.error = result.error || 'JSON\u30a4\u30f3\u30dd\u30fc\u30c8\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002';
+    state.admin.message = '';
   }
   renderAdminView();
   return result;
+}
+
+function importAdminSubmissionsFile(event) {
+  const file = event.target?.files?.[0];
+  if (!file) {
+    state.admin.error = 'JSON本文またはJSONファイルを指定してください。';
+    state.admin.message = '';
+    renderAdminView();
+    return;
+  }
+  if (typeof FileReader === 'undefined') {
+    state.admin.error = 'この環境ではファイルを読み込めません。JSON本文を貼り付けてください。';
+    state.admin.message = '';
+    renderAdminView();
+    return;
+  }
+  const reader = new FileReader();
+  reader.addEventListener('load', () => {
+    importAdminSubmissionsJson(String(reader.result || ''));
+  });
+  reader.addEventListener('error', () => {
+    state.admin.error = 'JSONファイルを読み込めませんでした。';
+    state.admin.message = '';
+    renderAdminView();
+  });
+  reader.readAsText(file);
 }
 
 function deleteSingleSubmission(submissionId) {
@@ -2782,6 +2815,7 @@ if (typeof window !== 'undefined') {
     clearSubmissions,
     exportSubmissionsJson,
     importSubmissionsJson,
+    isSubmissionRecord,
     verifyAdminPasscode,
     renderAdminView,
     renderSubmissionList,
@@ -2790,6 +2824,7 @@ if (typeof window !== 'undefined') {
     downloadAllSubmissionsJson,
     exportAllSubmissionsJson,
     importAdminSubmissionsJson,
+    importAdminSubmissionsFile,
     deleteSingleSubmission,
     clearAllSubmissionData,
     getFixedCameraViews,
