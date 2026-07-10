@@ -107,6 +107,28 @@ class MockCanvas extends MockElement {
   }
 }
 
+class MockLocalStorage {
+  constructor() {
+    this.store = new Map();
+  }
+
+  getItem(key) {
+    return this.store.has(key) ? this.store.get(key) : null;
+  }
+
+  setItem(key, value) {
+    this.store.set(key, String(value));
+  }
+
+  removeItem(key) {
+    this.store.delete(key);
+  }
+
+  clear() {
+    this.store.clear();
+  }
+}
+
 function parseElements(html, documentRef) {
   const elements = [];
   const tagPattern = /<([a-zA-Z][\w-]*)([^>]*)>/g;
@@ -176,6 +198,7 @@ function change(element, checked) {
 }
 
 globalThis.document = new MockDocument();
+globalThis.localStorage = new MockLocalStorage();
 globalThis.window = {
   innerWidth: 1280,
   innerHeight: 800,
@@ -183,6 +206,9 @@ globalThis.window = {
   __LIGHTING_ASSISTANT_SKIP_3D__: true,
   location: { pathname: '/', search: '?participant=P001' },
   addEventListener() {},
+  confirm() {
+    return true;
+  },
 };
 globalThis.console = console;
 
@@ -346,6 +372,8 @@ assert(Array.isArray(api.state.submissions[0].rawOperationLog), 'submission shou
 assert(api.state.submissions[0].embeddingStatus.imageEmbeddingReady === false, 'submission should include embedding status');
 assert(api.state.submissions[0].retrievalMetadata.datasetVersion === 'impression_dataset_v1', 'submission should include retrieval metadata');
 assert(api.state.submissions[0].analysisFlags.hasMultipleViews === true, 'submission should include analysis flags');
+assert(api.loadSubmissions().length === 1, 'submission should be persisted to dataStore');
+assert(api.getSubmissionById(api.state.result.submissionId).submissionId === api.state.result.submissionId, 'dataStore should retrieve submission by id');
 const expectedViewIds = ['user_view', 'front', 'left_45', 'right_45', 'upper_front'];
 assert(api.state.result.submissionImages.length === 5, 'result should include five submission images');
 assert(api.state.submissions[0].submissionImages.length === 5, 'stored submission should include five submission images');
@@ -405,6 +433,35 @@ const singleAdminJson = api.downloadSingleSubmissionJson(api.state.result.submis
 assert(JSON.parse(singleAdminJson).submissionId === api.state.result.submissionId, 'single admin download should return selected submission JSON');
 const allAdminJson = api.downloadAllSubmissionsJson();
 assert(JSON.parse(allAdminJson).length >= 1, 'all admin download should return submissions array JSON');
+const exportedAdminJson = api.exportAllSubmissionsJson();
+assert(JSON.parse(exportedAdminJson).length === 1, 'admin export should return persisted submissions JSON');
+api.state.submissions = [];
+api.render();
+assert(app.querySelector('.admin-submission-row'), 'admin should reload persisted submissions after memory is cleared');
+assert(api.state.submissions.length === 1, 'admin render should sync state from dataStore');
+api.deleteSingleSubmission(api.state.result.submissionId);
+assert(api.loadSubmissions().length === 0, 'single delete should remove persisted submission');
+assert(!app.querySelector('.admin-submission-row'), 'single delete should remove row from admin list');
+input(app.querySelector('#admin-import-json'), exportedAdminJson);
+app.querySelector('#import-submissions').click();
+assert(api.loadSubmissions().length === 1, 'admin import should restore persisted submissions');
+assert(app.querySelector('.admin-submission-row'), 'admin import should render restored row');
+api.clearAllSubmissionData();
+assert(api.loadSubmissions().length === 0, 'clear all should remove persisted submissions');
+assert(!app.querySelector('.admin-submission-row'), 'clear all should remove rows from admin list');
+const originalSetItem = localStorage.setItem.bind(localStorage);
+localStorage.setItem = () => {
+  const error = new Error('quota');
+  error.name = 'QuotaExceededError';
+  throw error;
+};
+const failedSave = api.saveSubmission({ submissionId: 'quota-test' });
+assert(failedSave.ok === false && failedSave.error.includes('JSON'), 'dataStore save failure should return a JSON fallback message');
+api.appendSubmissionToLog({ submissionId: 'quota-test' });
+assert(api.state.persistenceMessage.includes('JSON保存'), 'appendSubmissionToLog should expose a save failure message');
+localStorage.setItem = originalSetItem;
+api.clearAllSubmissionData();
+api.state.persistenceMessage = '';
 window.location.pathname = '/';
 api.render();
 assert(!app.innerHTML.includes('NaN'), 'feedback should not show NaN');
