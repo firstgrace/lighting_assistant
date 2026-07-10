@@ -56,6 +56,9 @@ const impressionTagOptions = [
 ];
 const trainingMode = 'basic';
 const allowLightColorEditing = trainingMode !== 'basic';
+// Development fallback only. Set VITE_ADMIN_PASSCODE for a real study deployment.
+const ADMIN_PASSCODE = import.meta.env?.VITE_ADMIN_PASSCODE || 'dev-admin';
+const ADMIN_PASSCODE_IS_FALLBACK = !import.meta.env?.VITE_ADMIN_PASSCODE;
 
 const supportCondition = {
   showHintsDuringOperation: true,
@@ -220,6 +223,7 @@ const state = {
   uniformVisibilityEvaluation: null,
   camera: { theta: -38, phi: 54, radius: 9.2, view: 'free' },
   feedbackPosition: { x: 0, y: 0 },
+  admin: { authenticated: false, passcodeInput: '', selectedSubmissionId: '', error: '' },
   result: null,
 };
 
@@ -565,6 +569,10 @@ function drawFallbackCanvas() {
 }
 
 function render() {
+  if (isAdminRoute()) {
+    renderAdminView();
+    return;
+  }
   if (state.phase === 'setup') renderSetup();
   if (state.phase === 'operation') renderOperation();
   if (state.phase === 'feedback') renderFeedback();
@@ -765,6 +773,7 @@ function renderFeedback() {
         </div>
         <div class="feedback-actions">
           <button type="button" class="secondary-btn" id="retry">\u30ea\u30c8\u30e9\u30a4</button>
+          <button type="button" class="secondary-btn" id="download-submission">JSON\u4fdd\u5b58</button>
           <button type="button" class="secondary-btn" id="next-task">\u6b21\u306e\u304a\u984c\u3078</button>
         </div>
       </section>
@@ -783,9 +792,231 @@ function renderFeedback() {
     state.phase = 'setup';
     renderSetup();
   });
+  app.querySelector('#download-submission').addEventListener('click', downloadSubmissionJson);
   bindFeedbackDrag();
   bindUserImpressionForm();
   applyFeedbackPosition();
+}
+
+function renderAdminView() {
+  const submissions = getSubmissionStore();
+  const selected = getSelectedAdminSubmission(submissions);
+  app.innerHTML = `
+    <main class="screen admin-screen">
+      <section class="admin-shell">
+        <header class="admin-head">
+          <div>
+            <h1>Submission Admin</h1>
+            <p class="muted">\u53ce\u96c6\u3057\u305fsubmission\u3092\u78ba\u8a8d\u3059\u308b\u958b\u767a\u7528\u7ba1\u7406\u753b\u9762\u3067\u3059\u3002</p>
+          </div>
+          <button type="button" class="ghost-btn" id="admin-study-link">Study</button>
+        </header>
+        ${state.admin.authenticated ? `
+          <div class="admin-actions">
+            <button type="button" class="secondary-btn" id="download-all-submissions">\u5168\u4ef6JSON\u4fdd\u5b58</button>
+          </div>
+          <div class="admin-grid">
+            ${renderSubmissionList(submissions)}
+            ${renderSubmissionDetail(selected)}
+          </div>
+        ` : renderAdminLogin()}
+      </section>
+    </main>
+  `;
+  bindAdminView();
+}
+
+function renderAdminLogin() {
+  return `
+    <section class="admin-login">
+      <label class="form-row">
+        <span>\u7ba1\u7406\u7528\u30d1\u30b9\u30b3\u30fc\u30c9</span>
+        <input id="admin-passcode" type="password" value="${escapeHtml(state.admin.passcodeInput)}" autocomplete="off" />
+      </label>
+      ${ADMIN_PASSCODE_IS_FALLBACK ? '<p class="score-note">VITE_ADMIN_PASSCODE\u672a\u8a2d\u5b9a\u306e\u305f\u3081\u3001\u958b\u767a\u7528\u4eee\u30d1\u30b9\u30b3\u30fc\u30c9\u3092\u4f7f\u7528\u4e2d\u3067\u3059\u3002</p>' : ''}
+      ${state.admin.error ? `<p class="admin-error">${escapeHtml(state.admin.error)}</p>` : ''}
+      <button type="button" class="primary-btn" id="admin-login">\u78ba\u8a8d</button>
+    </section>
+  `;
+}
+
+function renderSubmissionList(submissions) {
+  if (!submissions.length) {
+    return '<section class="admin-list"><h2>Submissions</h2><p class="score-note">\u4fdd\u5b58\u3055\u308c\u305f\u63d0\u51fa\u30c7\u30fc\u30bf\u306f\u3042\u308a\u307e\u305b\u3093</p></section>';
+  }
+  return `
+    <section class="admin-list">
+      <h2>Submissions</h2>
+      <div class="admin-submission-list">
+        ${submissions.map((submission) => `
+          <button type="button" class="admin-submission-row ${submission.submissionId === state.admin.selectedSubmissionId ? 'is-selected' : ''}" data-submission-id="${escapeHtml(submission.submissionId)}">
+            <span>${formatDateForDisplay(submission.createdAt)}</span>
+            <strong>${escapeHtml(submission.participantId)}</strong>
+            <span>${escapeHtml(submission.sessionId)}</span>
+            <span>${escapeHtml(submission.submissionId)}</span>
+            <span>${escapeHtml(submission.taskLabel)}</span>
+            <span>visibility: ${formatNullable(submission.userImpression?.visibilityRating)}</span>
+            <span>primary: ${escapeHtml(submission.userImpression?.primaryImpression || '--')}</span>
+            <span>${escapeHtml((submission.userImpression?.impressionTags || []).join(', ') || '--')}</span>
+            <span>${escapeHtml(shortText(submission.userImpression?.comment || '', 42))}</span>
+            <span>images: ${submission.submissionImages?.length || 0}</span>
+          </button>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function renderSubmissionDetail(submission) {
+  if (!submission) {
+    return '<section class="admin-detail"><h2>Detail</h2><p class="score-note">\u63d0\u51fa\u30c7\u30fc\u30bf\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002</p></section>';
+  }
+  return `
+    <section class="admin-detail">
+      <div class="admin-detail-head">
+        <h2>${escapeHtml(submission.submissionId)}</h2>
+        <button type="button" class="secondary-btn" id="download-single-submission" data-submission-id="${escapeHtml(submission.submissionId)}">1\u4ef6JSON\u4fdd\u5b58</button>
+      </div>
+      ${renderAdminImages(submission.submissionImages || [])}
+      ${adminJsonBlock('systemDiagnostics', submission.systemDiagnostics)}
+      ${adminJsonBlock('userImpression', submission.userImpression)}
+      <section class="admin-block">
+        <h3>Tags / Comment</h3>
+        <p><strong>reasonTags:</strong> ${escapeHtml((submission.userImpression?.reasonTags || []).join(', ') || '--')}</p>
+        <p><strong>impressionTags:</strong> ${escapeHtml((submission.userImpression?.impressionTags || []).join(', ') || '--')}</p>
+        <p><strong>comment:</strong> ${escapeHtml(submission.userImpression?.comment || '--')}</p>
+      </section>
+      ${adminJsonBlock('lightingState', summarizeLightingState(submission.lightingState))}
+      ${adminJsonBlock('cameraState', submission.cameraState)}
+      ${adminJsonBlock('submission JSON', submission)}
+    </section>
+  `;
+}
+
+function renderAdminImages(images) {
+  if (!images.length) return '<section class="admin-block"><h3>Images</h3><p class="score-note">保存された視点画像はありません</p></section>';
+  return `
+    <section class="admin-block">
+      <h3>Images</h3>
+      <div class="admin-image-grid">
+        ${images.map((image) => `
+          <figure>
+            <img src="${validDataUrl(image.dataUrl) ? image.dataUrl : transparentPixelDataUrl()}" alt="${escapeHtml(image.viewId)}" />
+            <figcaption>${escapeHtml(image.viewId)}</figcaption>
+          </figure>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function adminJsonBlock(title, value) {
+  return `
+    <section class="admin-block">
+      <h3>${escapeHtml(title)}</h3>
+      <pre>${escapeHtml(JSON.stringify(sanitizeSubmissionRecord(value), null, 2))}</pre>
+    </section>
+  `;
+}
+
+function bindAdminView() {
+  app.querySelector('#admin-study-link')?.addEventListener('click', () => {
+    if (typeof window !== 'undefined') window.location.pathname = '/';
+    render();
+  });
+  app.querySelector('#admin-passcode')?.addEventListener('input', (event) => {
+    state.admin.passcodeInput = event.target.value;
+  });
+  app.querySelector('#admin-login')?.addEventListener('click', () => {
+    if (verifyAdminPasscode(state.admin.passcodeInput)) {
+      state.admin.authenticated = true;
+      state.admin.error = '';
+      const first = getSubmissionStore()[0];
+      if (first && !state.admin.selectedSubmissionId) state.admin.selectedSubmissionId = first.submissionId;
+    } else {
+      state.admin.error = '\u30d1\u30b9\u30b3\u30fc\u30c9\u304c\u4e00\u81f4\u3057\u307e\u305b\u3093\u3002';
+    }
+    renderAdminView();
+  });
+  app.querySelectorAll('.admin-submission-row').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.admin.selectedSubmissionId = button.dataset.submissionId;
+      renderAdminView();
+    });
+  });
+  app.querySelector('#download-single-submission')?.addEventListener('click', (event) => {
+    downloadSingleSubmissionJson(event.target.dataset.submissionId);
+  });
+  app.querySelector('#download-all-submissions')?.addEventListener('click', downloadAllSubmissionsJson);
+}
+
+function verifyAdminPasscode(value) {
+  return String(value || '') === ADMIN_PASSCODE;
+}
+
+function getSubmissionStore() {
+  return state.submissions;
+}
+
+function getSelectedAdminSubmission(submissions = getSubmissionStore()) {
+  if (!submissions.length) return null;
+  return submissions.find((item) => item.submissionId === state.admin.selectedSubmissionId) || submissions[0];
+}
+
+function downloadSingleSubmissionJson(submissionId) {
+  const submission = getSubmissionStore().find((item) => item.submissionId === submissionId);
+  if (!submission) return null;
+  return downloadJsonPayload(`${submission.submissionId}.json`, sanitizeSubmissionRecord(submission));
+}
+
+function downloadAllSubmissionsJson() {
+  return downloadJsonPayload('submissions.json', getSubmissionStore().map((item) => sanitizeSubmissionRecord(item)));
+}
+
+function downloadJsonPayload(filename, payload) {
+  const json = JSON.stringify(sanitizeSubmissionRecord(payload), null, 2);
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function' || typeof URL === 'undefined' || typeof Blob === 'undefined') {
+    return json;
+  }
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+  return json;
+}
+
+function isAdminRoute() {
+  return typeof window !== 'undefined' && window.location?.pathname === '/admin';
+}
+
+function formatDateForDisplay(value) {
+  return value ? escapeHtml(String(value)) : '--';
+}
+
+function formatNullable(value) {
+  return value === null || value === undefined || value === '' ? '--' : escapeHtml(String(value));
+}
+
+function shortText(value, maxLength) {
+  const text = String(value || '');
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text || '--';
+}
+
+function summarizeLightingState(lightingState) {
+  return {
+    lightCount: lightingState?.lights?.length || 0,
+    lights: (lightingState?.lights || []).map((light) => ({
+      id: light.id,
+      type: light.type,
+      enabled: light.enabled,
+      position: light.position,
+      intensity: light.intensity,
+      colorTemperatureLabel: light.colorTemperatureLabel,
+    })),
+  };
 }
 
 function switchRow(id, label, checked) {
@@ -1046,8 +1277,7 @@ function submit() {
     submissionImages: clone(submissionImages),
     lights: clone(state.lights),
   });
-  const submission = buildSubmission(task, state.result);
-  state.submissions.push(submission);
+  state.result.submission = appendSubmissionToLog(buildSubmissionRecord(task, state.result));
   state.phase = 'feedback';
   render();
 }
@@ -1407,6 +1637,8 @@ function updateUserImpression(next) {
   const submission = state.submissions.find((item) => item.submissionId === state.result.submissionId);
   if (submission) {
     submission.userImpression = clone(state.result.userImpression);
+    submission.analysisFlags = buildAnalysisFlags(submission.userImpression, submission.submissionImages);
+    state.result.submission = submission;
   }
 }
 
@@ -1994,26 +2226,122 @@ function generateSubmissionId() {
 }
 
 function buildSubmission(task, result) {
-  return {
+  return buildSubmissionRecord(task, result);
+}
+
+function buildSubmissionRecord(task = currentTask(), result = state.result) {
+  const userCameraPose = deriveCameraPoseFromState(state.camera);
+  const record = {
     participantId: state.participantId,
     sessionId: state.sessionId,
-    submissionId: result.submissionId,
-    createdAt: result.createdAt,
+    submissionId: result?.submissionId || generateSubmissionId(),
+    createdAt: result?.createdAt || new Date().toISOString(),
     taskId: task.id,
-    taskTitle: task.label,
-    modelId: state.modelId,
-    lights: clone(state.lights),
-    submissionImages: clone(result.submissionImages || []),
-    diagnostic: {
-      value: result.current,
-      guideValue: PASS_SCORE,
-      allDiagnostics: clone(result.allScores),
-      feedbackInput: clone(result.feedbackInput),
-      feedback: clone(result.feedback),
+    taskLabel: task.label,
+    lightingState: {
+      lights: state.lights.map((light, index) => serializeLightState(light, index)),
     },
-    userImpression: clone(result.userImpression || createEmptyUserImpression()),
-    operationHistory: clone(state.history),
+    cameraState: {
+      userCameraPosition: userCameraPose.cameraPosition,
+      userCameraTarget: userCameraPose.cameraTarget,
+    },
+    systemDiagnostics: {
+      evaluationSource: result?.feedbackInput?.evaluationSource || 'legacy',
+      score: result?.current ?? null,
+      illuminanceSummary: clone(result?.feedbackInput?.illuminanceSummary || EMPTY_ILLUMINANCE_SUMMARY),
+      feedback: clone(result?.feedback || {}),
+    },
+    submissionImages: clone(result?.submissionImages || []),
+    userImpression: clone(result?.userImpression || createEmptyUserImpression()),
+    actionSummary: clone(state.sessionStats),
+    rawOperationLog: clone(state.history),
+    embeddingStatus: {
+      imageEmbeddingReady: false,
+      textEmbeddingReady: false,
+      visionRagReady: false,
+    },
+    retrievalMetadata: {
+      imageViewsForEmbedding: ['front', 'left_45', 'right_45', 'upper_front'],
+      textFieldsForEmbedding: ['comment', 'reasonTags', 'impressionTags', 'primaryImpression'],
+      datasetVersion: 'impression_dataset_v1',
+    },
+    analysisFlags: buildAnalysisFlags(result?.userImpression, result?.submissionImages),
   };
+  return sanitizeSubmissionRecord(record);
+}
+
+function serializeLightState(light, index) {
+  return {
+    id: `light-${index + 1}`,
+    type: light.kind,
+    enabled: light.enabled !== false,
+    position: finiteVector({ x: light.x, y: light.y, z: light.z }),
+    intensity: finiteNumber(light.intensity),
+    colorTemperatureLabel: BASIC_TRAINING_LIGHT_COLOR_LABEL,
+    spotParams: {
+      spread: light.kind === 'spot' ? finiteNumber(light.spread) : null,
+      elevation: finiteNumber(light.elevation),
+      azimuth: finiteNumber(light.azimuth),
+    },
+    areaParams: {
+      width: light.kind === 'area' ? finiteNumber(light.width) : null,
+      height: light.kind === 'area' ? finiteNumber(light.height) : null,
+      elevation: finiteNumber(light.elevation),
+      azimuth: finiteNumber(light.azimuth),
+    },
+  };
+}
+
+function buildAnalysisFlags(userImpression = createEmptyUserImpression(), submissionImages = []) {
+  return {
+    hasUserComment: Boolean(userImpression?.comment?.trim()),
+    hasMultipleViews: Array.isArray(submissionImages) && submissionImages.length >= 2,
+    hasVisibilityRating: userImpression?.visibilityRating !== null && userImpression?.visibilityRating !== undefined,
+    hasImpressionTags: Array.isArray(userImpression?.impressionTags) && userImpression.impressionTags.length > 0,
+  };
+}
+
+function sanitizeSubmissionRecord(record) {
+  return sanitizeJsonValue(record);
+}
+
+function sanitizeJsonValue(value) {
+  if (value === undefined) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (Array.isArray(value)) return value.map((item) => sanitizeJsonValue(item));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeJsonValue(item)]));
+  }
+  return value;
+}
+
+function appendSubmissionToLog(submissionRecord) {
+  const sanitized = sanitizeSubmissionRecord(submissionRecord);
+  const index = state.submissions.findIndex((item) => item.submissionId === sanitized.submissionId);
+  if (index >= 0) {
+    state.submissions[index] = sanitized;
+  } else {
+    state.submissions.push(sanitized);
+  }
+  return sanitized;
+}
+
+function downloadSubmissionJson() {
+  if (!state.result) return null;
+  const submission = state.submissions.find((item) => item.submissionId === state.result.submissionId)
+    || appendSubmissionToLog(buildSubmissionRecord(currentTask(), state.result));
+  const json = JSON.stringify(sanitizeSubmissionRecord(submission), null, 2);
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function' || typeof URL === 'undefined' || typeof Blob === 'undefined') {
+    return json;
+  }
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${submission.submissionId}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  return json;
 }
 
 function getSubjectCaptureBounds(modelId) {
@@ -2316,6 +2644,16 @@ if (typeof window !== 'undefined') {
     generateSessionId,
     generateSubmissionId,
     buildSubmission,
+    buildSubmissionRecord,
+    sanitizeSubmissionRecord,
+    appendSubmissionToLog,
+    downloadSubmissionJson,
+    verifyAdminPasscode,
+    renderAdminView,
+    renderSubmissionList,
+    renderSubmissionDetail,
+    downloadSingleSubmissionJson,
+    downloadAllSubmissionsJson,
     getFixedCameraViews,
     captureSubmissionImages,
     captureView,

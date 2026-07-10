@@ -181,7 +181,7 @@ globalThis.window = {
   innerHeight: 800,
   devicePixelRatio: 1,
   __LIGHTING_ASSISTANT_SKIP_3D__: true,
-  location: { search: '?participant=P001' },
+  location: { pathname: '/', search: '?participant=P001' },
   addEventListener() {},
 };
 globalThis.console = console;
@@ -288,6 +288,17 @@ assert(api.state.phase === 'setup', 'initial phase should be setup');
 assert(app.querySelector('#start'), 'start button should exist');
 assert(api.state.participantId === 'P001', 'participant id should initialize from URL query');
 assert(app.querySelector('#participant-id').value === 'P001', 'participant input should show URL participant id');
+window.location.pathname = '/admin';
+api.render();
+assert(app.querySelector('#admin-passcode'), 'admin route should show passcode input');
+assert(app.innerHTML.includes('保存された提出データはありません') === false, 'admin empty state should be hidden before authentication');
+input(app.querySelector('#admin-passcode'), 'dev-admin');
+app.querySelector('#admin-login').click();
+assert(api.state.admin.authenticated === true, 'admin passcode should authenticate in development fallback');
+assert(app.innerHTML.includes('保存された提出データはありません'), 'admin should show empty state when there are no submissions');
+window.location.pathname = '/';
+api.render();
+assert(app.querySelector('#start'), 'study route should still render setup after leaving admin');
 assert(app.querySelectorAll('.task-choice').length === 7, 'tutorials plus five task choices should exist');
 assert(app.innerHTML.includes('物体を照らしてみよう'), 'setup should show the first tutorial task');
 assert(app.innerHTML.includes('物体をできるだけ照らさないようにしてみよう'), 'setup should show the second tutorial task');
@@ -320,7 +331,21 @@ assert(api.state.submissions.length === 1, 'submission should be stored in memor
 assert(api.state.submissions[0].participantId === api.state.participantId, 'submission should include participant id');
 assert(api.state.submissions[0].sessionId === api.state.sessionId, 'submission should include session id');
 assert(api.state.submissions[0].submissionId === api.state.result.submissionId, 'submission should include submission id');
+assert(api.state.result.submission.submissionId === api.state.result.submissionId, 'state.result should reference the saved submission record');
 assert(api.state.submissions[0].createdAt === api.state.result.createdAt, 'submission should include createdAt');
+assert(api.state.submissions[0].taskId === 'uniform_visibility', 'submission should include task id');
+assert(api.state.submissions[0].taskLabel, 'submission should include task label');
+assert(api.state.submissions[0].lightingState.lights.length === 3, 'submission should include serialized lighting state');
+assert(api.state.submissions[0].lightingState.lights[0].id === 'light-1', 'serialized light should include stable id');
+assert(api.state.submissions[0].lightingState.lights[0].position && Number.isFinite(api.state.submissions[0].lightingState.lights[0].position.x), 'serialized light should include finite position');
+assert(api.state.submissions[0].cameraState.userCameraPosition && Number.isFinite(api.state.submissions[0].cameraState.userCameraPosition.x), 'submission should include user camera position');
+assert(api.state.submissions[0].systemDiagnostics.evaluationSource === 'direct_illuminance', 'submission should include system diagnostics');
+assert(api.state.submissions[0].systemDiagnostics.illuminanceSummary, 'submission should include illuminance summary');
+assert(api.state.submissions[0].actionSummary, 'submission should include action summary');
+assert(Array.isArray(api.state.submissions[0].rawOperationLog), 'submission should include raw operation log');
+assert(api.state.submissions[0].embeddingStatus.imageEmbeddingReady === false, 'submission should include embedding status');
+assert(api.state.submissions[0].retrievalMetadata.datasetVersion === 'impression_dataset_v1', 'submission should include retrieval metadata');
+assert(api.state.submissions[0].analysisFlags.hasMultipleViews === true, 'submission should include analysis flags');
 const expectedViewIds = ['user_view', 'front', 'left_45', 'right_45', 'upper_front'];
 assert(api.state.result.submissionImages.length === 5, 'result should include five submission images');
 assert(api.state.submissions[0].submissionImages.length === 5, 'stored submission should include five submission images');
@@ -340,6 +365,11 @@ assert(api.state.submissions[0].userImpression.visibilityRating === null, 'empty
 assert(Array.isArray(api.state.submissions[0].userImpression.reasonTags), 'empty self evaluation should save reason tags array');
 assert(Array.isArray(api.state.submissions[0].userImpression.impressionTags), 'empty self evaluation should save impression tags array');
 assert(api.state.submissions[0].userImpression.primaryImpression === '', 'empty self evaluation should save empty primary impression');
+const sanitizedRecord = api.sanitizeSubmissionRecord({ a: Number.NaN, b: undefined, c: Number.POSITIVE_INFINITY, d: { ok: 1 } });
+assert(sanitizedRecord.a === null && sanitizedRecord.b === null && sanitizedRecord.c === null && sanitizedRecord.d.ok === 1, 'sanitizeSubmissionRecord should remove invalid JSON values');
+const downloadedJson = api.downloadSubmissionJson();
+const downloadedSubmission = JSON.parse(downloadedJson);
+assert(downloadedSubmission.submissionId === api.state.result.submissionId, 'downloadSubmissionJson should return current submission JSON in test environment');
 assert(api.state.history.some((entry) => entry.param === 'decision' && entry.evaluationSource === 'direct_illuminance' && entry.illuminanceSummary), 'decision log should include illuminance summary and source');
 assert(app.querySelector('#visibility-rating'), 'visibility rating select should exist');
 assert(app.querySelector('#impression-confidence'), 'confidence select should exist');
@@ -364,6 +394,19 @@ assert(api.state.result.userImpression.confidence === 3, 'confidence should upda
 assert(api.state.submissions[0].userImpression.visibilityRating === 4, 'visibility rating should update stored submission');
 assert(api.state.submissions[0].userImpression.impressionTags.includes('見やすい'), 'impression tag should update stored submission');
 assert(api.state.submissions[0].userImpression.primaryImpression === '見やすい', 'primary impression should update stored submission');
+window.location.pathname = '/admin';
+api.render();
+assert(app.querySelector('.admin-submission-row'), 'admin should show submission rows after authentication');
+assert(app.innerHTML.includes(api.state.result.submissionId), 'admin list should include submission id');
+assert(app.innerHTML.includes('user_view') && app.innerHTML.includes('front') && app.innerHTML.includes('upper_front'), 'admin detail should show submission image view ids');
+assert(app.innerHTML.includes('systemDiagnostics'), 'admin detail should show system diagnostics');
+assert(app.innerHTML.includes('userImpression'), 'admin detail should show user impression JSON');
+const singleAdminJson = api.downloadSingleSubmissionJson(api.state.result.submissionId);
+assert(JSON.parse(singleAdminJson).submissionId === api.state.result.submissionId, 'single admin download should return selected submission JSON');
+const allAdminJson = api.downloadAllSubmissionsJson();
+assert(JSON.parse(allAdminJson).length >= 1, 'all admin download should return submissions array JSON');
+window.location.pathname = '/';
+api.render();
 assert(!app.innerHTML.includes('NaN'), 'feedback should not show NaN');
 assert(!app.innerHTML.includes('undefined'), 'feedback should not show undefined');
 assert(!app.innerHTML.includes('null lx'), 'feedback should not show null lx');
