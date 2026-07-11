@@ -79,6 +79,11 @@ class MockDocument {
     this.scene = new MockCanvas('canvas', { id: 'scene' }, this);
   }
 
+  createElement(tagName) {
+    if (tagName.toLowerCase() === 'canvas') return new MockCanvas('canvas', {}, this);
+    return new MockElement(tagName, {}, this);
+  }
+
   querySelector(selector) {
     if (selector === '#app') return this.app;
     if (selector === '#scene') return this.scene;
@@ -91,8 +96,16 @@ class MockDocument {
 }
 
 class MockCanvas extends MockElement {
-  toDataURL() {
-    return 'data:image/jpeg;base64,phaseflowmock';
+  constructor(tagName, attrs = {}, documentRef = null) {
+    super(tagName, attrs, documentRef);
+    this.width = Number(attrs.width) || 1280;
+    this.height = Number(attrs.height) || 800;
+    this.dataUrlCalls = [];
+  }
+
+  toDataURL(type, quality) {
+    this.dataUrlCalls.push({ type, quality, width: this.width, height: this.height });
+    return `data:${type || 'image/png'};base64,phaseflowmock-${this.width}x${this.height}-q${quality ?? 'default'}`;
   }
 
   getContext() {
@@ -102,6 +115,7 @@ class MockCanvas extends MockElement {
       beginPath() {},
       arc() {},
       fill() {},
+      drawImage() {},
       fillStyle: '',
     };
   }
@@ -354,6 +368,9 @@ assert(api.state.result.feedbackInput.metrics.highlightClippingRate === null, 'h
 assert(api.state.result.submissionId.startsWith('submission-'), 'submission id should be generated on submit');
 assert(api.state.result.createdAt, 'submission createdAt should be set');
 assert(api.state.submissions.length === 1, 'submission should be stored in memory');
+assert(api.state.persistenceStatus.ok === true, 'submit should report successful browser storage');
+assert(api.state.persistenceMessage.includes('ブラウザ内に保存しました'), 'submit should show a successful storage message');
+assert(app.innerHTML.includes('ブラウザ内に保存しました'), 'feedback screen should show successful storage message');
 assert(api.state.submissions[0].participantId === api.state.participantId, 'submission should include participant id');
 assert(api.state.submissions[0].sessionId === api.state.sessionId, 'submission should include session id');
 assert(api.state.submissions[0].submissionId === api.state.result.submissionId, 'submission should include submission id');
@@ -382,7 +399,9 @@ assert(app.querySelector('.submission-images-preview'), 'submission images previ
 assert(app.querySelectorAll('.submission-image-card').length === 5, 'submission images preview should render five cards');
 assert(expectedViewIds.every((viewId) => app.innerHTML.includes(viewId)), 'submission images preview should show all required view ids');
 api.state.result.submissionImages.forEach((image) => {
-  assert(image.dataUrl.startsWith('data:image/'), `image ${image.viewId} should have a data URL`);
+  assert(image.dataUrl.startsWith('data:image/jpeg'), `image ${image.viewId} should be saved as JPEG`);
+  assert(image.dataUrl.includes('420x263'), `image ${image.viewId} should be downscaled for storage`);
+  assert(image.dataUrl.includes('q0.7'), `image ${image.viewId} should use compressed JPEG quality`);
   ['cameraPosition', 'cameraTarget'].forEach((key) => {
     assert(Number.isFinite(image[key].x), `${image.viewId} ${key}.x should be finite`);
     assert(Number.isFinite(image[key].y), `${image.viewId} ${key}.y should be finite`);
@@ -477,6 +496,8 @@ const failedSave = api.saveSubmission({ submissionId: 'quota-test' });
 assert(failedSave.ok === false && failedSave.error.includes('JSON'), 'dataStore save failure should return a JSON fallback message');
 api.appendSubmissionToLog({ submissionId: 'quota-test' });
 assert(api.state.persistenceMessage.includes('JSON保存'), 'appendSubmissionToLog should expose a save failure message');
+assert(api.state.persistenceStatus.ok === false, 'save failure should update persistence status');
+assert(api.state.persistenceStatus.error.includes('容量'), 'save failure should keep the failure reason');
 localStorage.setItem = originalSetItem;
 api.clearAllSubmissionData();
 api.state.persistenceMessage = '';

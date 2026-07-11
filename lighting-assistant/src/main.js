@@ -38,6 +38,8 @@ const EMPTY_ILLUMINANCE_SUMMARY = Object.freeze({
   totalSampleCount: 0,
 });
 const SURFACE_SAMPLE_OFFSET = 0.035;
+const SUBMISSION_IMAGE_MAX_WIDTH = 420;
+const SUBMISSION_IMAGE_JPEG_QUALITY = 0.7;
 const reasonTagOptions = [
   '\u660e\u308b\u3055\u304c\u3061\u3087\u3046\u3069\u3088\u3044',
   '\u660e\u308b\u3059\u304e\u308b',
@@ -235,6 +237,7 @@ const state = {
   camera: { theta: -38, phi: 54, radius: 9.2, view: 'free' },
   feedbackPosition: { x: 0, y: 0 },
   persistenceMessage: '',
+  persistenceStatus: null,
   admin: { authenticated: false, passcodeInput: '', selectedSubmissionId: '', error: '', message: '', importText: '' },
   result: null,
 };
@@ -776,7 +779,7 @@ function renderFeedback() {
         </div>
         <div class="feedback-body">
           <div class="score-panel">
-            ${state.persistenceMessage ? `<p class="admin-error">${escapeHtml(state.persistenceMessage)}</p>` : ''}
+            ${renderPersistenceMessage()}
             ${showScoreResult(result)}
             ${showPerformanceCritique(result)}
             ${showReflectionQuestion(result)}
@@ -868,6 +871,14 @@ function renderAdminLogin() {
       <button type="button" class="primary-btn" id="admin-login">\u78ba\u8a8d</button>
     </section>
   `;
+}
+
+function renderPersistenceMessage() {
+  if (!state.persistenceStatus && !state.persistenceMessage) return '';
+  const ok = state.persistenceStatus?.ok === true;
+  const className = ok ? 'admin-message' : 'admin-error';
+  const message = state.persistenceStatus?.message || state.persistenceMessage;
+  return `<p class="${className}">${escapeHtml(message)}</p>`;
 }
 
 function renderSubmissionList(submissions) {
@@ -1794,7 +1805,9 @@ function updateUserImpression(next) {
     submission.userImpression = clone(state.result.userImpression);
     submission.analysisFlags = buildAnalysisFlags(submission.userImpression, submission.submissionImages);
     const saveResult = saveSubmission(submission);
+    setPersistenceStatus(saveResult, submission.submissionId);
     state.persistenceMessage = saveResult.ok ? '' : `${saveResult.error} この提出は画面上には残っています。JSON保存で退避してください。`;
+    setPersistenceStatus(saveResult, submission.submissionId);
     state.result.submission = submission;
   }
 }
@@ -2481,8 +2494,29 @@ function appendSubmissionToLog(submissionRecord) {
     state.submissions.push(sanitized);
   }
   const saveResult = saveSubmission(sanitized);
+  setPersistenceStatus(saveResult, sanitized.submissionId);
   state.persistenceMessage = saveResult.ok ? '' : `${saveResult.error} この提出は画面上には残っています。JSON保存で退避してください。`;
+  setPersistenceStatus(saveResult, sanitized.submissionId);
   return sanitized;
+}
+
+function setPersistenceStatus(saveResult, submissionId = '') {
+  if (saveResult?.ok) {
+    state.persistenceStatus = {
+      ok: true,
+      message: `submission ${submissionId} をブラウザ内に保存しました。`,
+      error: '',
+    };
+    state.persistenceMessage = state.persistenceStatus.message;
+    return;
+  }
+  const reason = saveResult?.error || '原因不明の保存エラーです。';
+  state.persistenceStatus = {
+    ok: false,
+    message: `submission ${submissionId} のブラウザ内保存に失敗しました。理由: ${reason} この提出は画面上には残っています。JSON保存で退避してください。`,
+    error: reason,
+  };
+  state.persistenceMessage = state.persistenceStatus.message;
 }
 
 function downloadSubmissionJson() {
@@ -2665,11 +2699,32 @@ function deriveCameraPoseFromState(cameraState) {
 
 function safeCanvasDataUrl(canvas) {
   try {
-    if (canvas?.toDataURL) return canvas.toDataURL('image/jpeg', 0.82);
+    if (!canvas?.toDataURL) return transparentPixelDataUrl();
+    return compressedCanvasDataUrl(canvas);
   } catch {
     // Cross-origin or context failures fall back to a tiny transparent PNG.
   }
   return transparentPixelDataUrl();
+}
+
+function compressedCanvasDataUrl(canvas, maxWidth = SUBMISSION_IMAGE_MAX_WIDTH, quality = SUBMISSION_IMAGE_JPEG_QUALITY) {
+  const sourceWidth = Number(canvas.width || canvas.videoWidth || 0);
+  const sourceHeight = Number(canvas.height || canvas.videoHeight || 0);
+  if (!Number.isFinite(sourceWidth) || !Number.isFinite(sourceHeight) || sourceWidth <= 0 || sourceHeight <= 0) {
+    return canvas.toDataURL('image/jpeg', quality);
+  }
+  const targetWidth = Math.min(sourceWidth, maxWidth);
+  const targetHeight = Math.max(1, Math.round(sourceHeight * (targetWidth / sourceWidth)));
+  if (targetWidth === sourceWidth && targetHeight === sourceHeight) {
+    return canvas.toDataURL('image/jpeg', quality);
+  }
+  const output = document.createElement('canvas');
+  output.width = Math.round(targetWidth);
+  output.height = targetHeight;
+  const context = output.getContext('2d');
+  if (!context?.drawImage) return canvas.toDataURL('image/jpeg', quality);
+  context.drawImage(canvas, 0, 0, output.width, output.height);
+  return output.toDataURL('image/jpeg', quality);
 }
 
 function validDataUrl(value) {
@@ -2831,6 +2886,9 @@ if (typeof window !== 'undefined') {
     captureSubmissionImages,
     captureView,
     restoreUserCamera,
+    compressedCanvasDataUrl,
+    SUBMISSION_IMAGE_MAX_WIDTH,
+    SUBMISSION_IMAGE_JPEG_QUALITY,
     hideCaptureExcludedObjects,
     restoreCaptureExcludedObjects,
     withCleanCaptureScene,
