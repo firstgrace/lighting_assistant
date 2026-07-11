@@ -1,4 +1,4 @@
-import {
+﻿import {
   clearSubmissions,
   deleteSubmission,
   exportSubmissionsJson,
@@ -238,6 +238,8 @@ const state = {
   feedbackPosition: { x: 0, y: 0 },
   persistenceMessage: '',
   persistenceStatus: null,
+  completionMessage: '',
+  completionError: '',
   admin: { authenticated: false, passcodeInput: '', selectedSubmissionId: '', error: '', message: '', importText: '' },
   result: null,
 };
@@ -755,7 +757,7 @@ function renderOperation() {
             </div>
           `}
           <div class="submit-wrap">
-            <button type="button" class="primary-btn" id="submit">\u63d0\u51fa</button>
+            <button type="button" class="primary-btn" id="submit">\u7167\u660e\u3092\u78ba\u5b9a\u3057\u3066\u8a55\u4fa1\u3078\u9032\u3080</button>
           </div>
         </aside>
       </section>
@@ -779,7 +781,8 @@ function renderFeedback() {
         </div>
         <div class="feedback-body">
           <div class="score-panel">
-            ${renderPersistenceMessage()}
+            ${renderCompletionMessage()}
+            ${state.result?.completed ? renderPersistenceMessage() : ''}
             ${showScoreResult(result)}
             ${showPerformanceCritique(result)}
             ${showReflectionQuestion(result)}
@@ -790,7 +793,7 @@ function renderFeedback() {
         </div>
         <div class="feedback-actions">
           <button type="button" class="secondary-btn" id="retry">\u30ea\u30c8\u30e9\u30a4</button>
-          <button type="button" class="secondary-btn" id="download-submission">JSON\u4fdd\u5b58</button>
+          ${state.result?.completed ? '<button type="button" class="secondary-btn" id="download-submission">JSON\u4fdd\u5b58</button>' : '<button type="button" class="secondary-btn" id="complete-submission">\u8a55\u4fa1\u3092\u4fdd\u5b58\u3057\u3066\u5b8c\u4e86</button>'}
           <button type="button" class="secondary-btn" id="next-task">\u6b21\u306e\u304a\u984c\u3078</button>
         </div>
       </section>
@@ -809,7 +812,8 @@ function renderFeedback() {
     state.phase = 'setup';
     renderSetup();
   });
-  app.querySelector('#download-submission').addEventListener('click', downloadSubmissionJson);
+  app.querySelector('#download-submission')?.addEventListener('click', downloadSubmissionJson);
+  app.querySelector('#complete-submission')?.addEventListener('click', completeSubmission);
   bindFeedbackDrag();
   bindUserImpressionForm();
   applyFeedbackPosition();
@@ -881,6 +885,12 @@ function renderPersistenceMessage() {
   return `<p class="${className}">${escapeHtml(message)}</p>`;
 }
 
+function renderCompletionMessage() {
+  if (state.completionError) return `<p class="admin-error">${escapeHtml(state.completionError)}</p>`;
+  if (state.completionMessage) return `<p class="admin-message">${escapeHtml(state.completionMessage)}</p>`;
+  return '';
+}
+
 function renderSubmissionList(submissions) {
   if (!submissions.length) {
     return '<section class="admin-list"><h2>Submissions</h2><p class="score-note">\u4fdd\u5b58\u3055\u308c\u305f\u63d0\u51fa\u30c7\u30fc\u30bf\u306f\u3042\u308a\u307e\u305b\u3093</p></section>';
@@ -938,7 +948,7 @@ function renderSubmissionDetail(submission) {
 }
 
 function renderAdminImages(images) {
-  if (!images.length) return '<section class="admin-block"><h3>Images</h3><p class="score-note">保存された視点画像はありません</p></section>';
+  if (!images.length) return '<section class="admin-block"><h3>Images</h3><p class="score-note">菫晏ｭ倥＆繧後◆隕也せ逕ｻ蜒上・縺ゅｊ縺ｾ縺帙ｓ</p></section>';
   return `
     <section class="admin-block">
       <h3>Images</h3>
@@ -1094,7 +1104,7 @@ function importAdminSubmissionsFile(event) {
     importAdminSubmissionsJson(String(reader.result || ''));
   });
   reader.addEventListener('error', () => {
-    state.admin.error = 'JSONファイルを読み込めませんでした。';
+    state.admin.error = 'JSON本文またはJSONファイルを指定してください。';
     state.admin.message = '';
     renderAdminView();
   });
@@ -1385,6 +1395,11 @@ function startTask() {
   state.startedAt = performance.now();
   state.startedAtIso = new Date().toISOString();
   state.sessionStats = createSessionStats();
+  state.result = null;
+  state.persistenceStatus = null;
+  state.persistenceMessage = '';
+  state.completionMessage = '';
+  state.completionError = '';
   updateDerivedIlluminance();
   scene.buildLights();
   scene.updateLights(state.lights);
@@ -1425,7 +1440,10 @@ function submit() {
     provisionalNote: task.provisionalEvaluation,
     userImpression: createEmptyUserImpression(),
     submissionImages,
+    draftSubmission: null,
+    completed: false,
   };
+  state.result.draftSubmission = buildSubmissionRecord(task, state.result);
   state.history.push({
     at: createdAt,
     elapsed: (performance.now() - state.startedAt) / 1000,
@@ -1443,7 +1461,11 @@ function submit() {
     submissionImages: clone(submissionImages),
     lights: clone(state.lights),
   });
-  state.result.submission = appendSubmissionToLog(buildSubmissionRecord(task, state.result));
+  state.result.submission = null;
+  state.persistenceStatus = null;
+  state.persistenceMessage = '';
+  state.completionMessage = '';
+  state.completionError = '';
   state.phase = 'feedback';
   render();
 }
@@ -1768,19 +1790,7 @@ function ratingOptions(selected) {
 function bindUserImpressionForm() {
   const form = app.querySelector('.impression-form');
   if (!form || !state.result) return;
-  const sync = () => {
-    const visibilityRating = nullableFormNumber(app.querySelector('#visibility-rating')?.value);
-    const confidence = nullableFormNumber(app.querySelector('#impression-confidence')?.value);
-    const reasonTags = app.querySelectorAll('input[name="reason-tags"]')
-      .filter((input) => input.checked)
-      .map((input) => input.value);
-    const impressionTags = app.querySelectorAll('input[name="impression-tags"]')
-      .filter((input) => input.checked)
-      .map((input) => input.value);
-    const primaryImpression = app.querySelector('#primary-impression')?.value || '';
-    const comment = app.querySelector('#impression-comment')?.value || '';
-    updateUserImpression({ visibilityRating, reasonTags, impressionTags, primaryImpression, comment, confidence });
-  };
+  const sync = () => updateUserImpression(readUserImpressionFromForm());
   app.querySelector('#visibility-rating')?.addEventListener('change', sync);
   app.querySelector('#impression-confidence')?.addEventListener('change', sync);
   app.querySelector('#impression-comment')?.addEventListener('input', sync);
@@ -1793,6 +1803,23 @@ function bindUserImpressionForm() {
   });
 }
 
+function readUserImpressionFromForm() {
+  const reasonInputs = Array.from(app.querySelectorAll('input[name="reason-tags"]'));
+  const impressionInputs = Array.from(app.querySelectorAll('input[name="impression-tags"]'));
+  return {
+    visibilityRating: nullableFormNumber(app.querySelector('#visibility-rating')?.value),
+    reasonTags: reasonInputs
+      .filter((input) => input.checked)
+      .map((input) => input.value),
+    impressionTags: impressionInputs
+      .filter((input) => input.checked)
+      .map((input) => input.value),
+    primaryImpression: app.querySelector('#primary-impression')?.value || '',
+    comment: app.querySelector('#impression-comment')?.value || '',
+    confidence: nullableFormNumber(app.querySelector('#impression-confidence')?.value),
+  };
+}
+
 function updateUserImpression(next) {
   if (!state.result) return;
   state.result.userImpression = {
@@ -1800,18 +1827,86 @@ function updateUserImpression(next) {
     ...state.result.userImpression,
     ...next,
   };
-  const submission = state.submissions.find((item) => item.submissionId === state.result.submissionId);
-  if (submission) {
-    submission.userImpression = clone(state.result.userImpression);
-    submission.analysisFlags = buildAnalysisFlags(submission.userImpression, submission.submissionImages);
-    const saveResult = saveSubmission(submission);
-    setPersistenceStatus(saveResult, submission.submissionId);
-    state.persistenceMessage = saveResult.ok ? '' : `${saveResult.error} この提出は画面上には残っています。JSON保存で退避してください。`;
-    setPersistenceStatus(saveResult, submission.submissionId);
-    state.result.submission = submission;
-  }
+  state.completionError = '';
+  state.result.draftSubmission = {
+    ...(state.result.draftSubmission || buildSubmissionRecord(currentTask(), state.result)),
+    userImpression: clone(state.result.userImpression),
+    analysisFlags: buildAnalysisFlags(state.result.userImpression, state.result.submissionImages),
+  };
 }
 
+function completeSubmission(event) {
+  event?.preventDefault?.();
+  if (!state.result) return null;
+  let formUserImpression;
+  try {
+    formUserImpression = readUserImpressionFromForm();
+  } catch (error) {
+    state.completionError = `評価フォームの読み取りに失敗しました。入力内容は保持されています。理由: ${error?.message || '不明なエラー'}`;
+    state.completionMessage = '';
+    renderFeedback();
+    return { ok: false, error: state.completionError };
+  }
+  updateUserImpression(formUserImpression);
+  const latestUserImpression = clone(state.result.userImpression);
+  const validationError = validateUserImpression(latestUserImpression);
+  if (validationError) {
+    state.completionError = validationError;
+    state.completionMessage = '';
+    renderFeedback();
+    return { ok: false, error: validationError };
+  }
+
+  const completedAt = new Date().toISOString();
+  state.history.push({
+    at: completedAt,
+    elapsed: (performance.now() - state.startedAt) / 1000,
+    participantId: state.participantId,
+    sessionId: state.sessionId,
+    submissionId: state.result.submissionId,
+    taskId: state.taskId,
+    param: 'user-impression-complete',
+    value: clone(latestUserImpression),
+    actionSummary: clone(state.sessionStats),
+  });
+
+  const completedSubmission = sanitizeSubmissionRecord({
+    ...(state.result.draftSubmission || buildSubmissionRecord(currentTask(), state.result)),
+    userImpression: clone(latestUserImpression),
+    actionSummary: clone(state.sessionStats),
+    rawOperationLog: clone(state.history),
+    analysisFlags: buildAnalysisFlags(latestUserImpression, state.result.submissionImages),
+  });
+  const saveResult = saveSubmission(completedSubmission);
+  setPersistenceStatus(saveResult, completedSubmission.submissionId);
+  if (!saveResult.ok) {
+    state.completionError = `保存に失敗しました。入力内容は保持されています。JSON保存を利用してください。理由: ${saveResult.error || '原因不明の保存エラーです。'}`;
+    state.completionMessage = '';
+    renderFeedback();
+    return saveResult;
+  }
+
+  replaceSubmissionStore(saveResult.submissions);
+  state.result.submission = completedSubmission;
+  state.result.draftSubmission = completedSubmission;
+  state.result.completed = true;
+  state.completionError = '';
+  state.completionMessage = '提出データを保存しました。ご協力ありがとうございました。';
+  renderFeedback();
+  return { ok: true, submission: completedSubmission };
+}
+
+function validateUserImpression(userImpression = createEmptyUserImpression()) {
+  if (userImpression.visibilityRating === null || userImpression.visibilityRating === undefined) {
+    return '見やすさ評価を選択してください。';
+  }
+  const hasReason = Array.isArray(userImpression.reasonTags) && userImpression.reasonTags.length > 0;
+  const hasComment = Boolean(userImpression.comment?.trim());
+  if (!hasReason && !hasComment) {
+    return '理由タグを1つ以上選ぶか、コメントを入力してください。';
+  }
+  return '';
+}
 function createEmptyUserImpression() {
   return {
     visibilityRating: null,
@@ -1951,8 +2046,7 @@ function buildUniformVisibilityFeedback(task, score, feedbackInput) {
     detectedIssues,
     nextObservation: score >= PASS_SCORE
       ? '次は暗い面に形が残っているか、最も明るい面の情報が潰れていないか観察してください。'
-      : '下位10%の測定点と平均値の差が、表面の読みやすさにどう見えているか確認してください。',
-    reflectionQuestion: task.reflectionQuestion,
+      : '下位10%の測定点と平均値の差が、表面の読みやすさにどう見えているか確認してください。',    reflectionQuestion: task.reflectionQuestion,
   };
 }
 
@@ -2495,7 +2589,6 @@ function appendSubmissionToLog(submissionRecord) {
   }
   const saveResult = saveSubmission(sanitized);
   setPersistenceStatus(saveResult, sanitized.submissionId);
-  state.persistenceMessage = saveResult.ok ? '' : `${saveResult.error} この提出は画面上には残っています。JSON保存で退避してください。`;
   setPersistenceStatus(saveResult, sanitized.submissionId);
   return sanitized;
 }
@@ -2518,9 +2611,13 @@ function setPersistenceStatus(saveResult, submissionId = '') {
   };
   state.persistenceMessage = state.persistenceStatus.message;
 }
-
 function downloadSubmissionJson() {
   if (!state.result) return null;
+  if (!state.result.completed) {
+    state.completionError = '評価を保存して完了してからJSON保存してください。';
+    renderFeedback();
+    return null;
+  }
   const submission = state.submissions.find((item) => item.submissionId === state.result.submissionId)
     || getSubmissionById(state.result.submissionId)
     || appendSubmissionToLog(buildSubmissionRecord(currentTask(), state.result));
@@ -2846,6 +2943,8 @@ if (typeof window !== 'undefined') {
     renderFeedback,
     startTask,
     submit,
+    completeSubmission,
+    validateUserImpression,
     resetLights,
     scoreAllTasks,
     evaluateTask,
