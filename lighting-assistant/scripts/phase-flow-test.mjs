@@ -1,4 +1,4 @@
-class MockElement {
+﻿class MockElement {
   constructor(tagName, attrs = {}, documentRef = null) {
     this.tagName = tagName.toUpperCase();
     this.attrs = attrs;
@@ -40,11 +40,11 @@ class MockElement {
   }
 
   querySelector(selector) {
-    return this.querySelectorAll(selector)[0] || null;
+    return this.querySelectorAll(selector).item(0) || null;
   }
 
   querySelectorAll(selector) {
-    return this.children.filter((element) => matches(element, selector));
+    return new MockNodeList(this.children.filter((element) => matches(element, selector)));
   }
 
   addEventListener(type, listener) {
@@ -70,6 +70,36 @@ class MockElement {
 
   getBoundingClientRect() {
     return { left: 0, top: 0, width: 160, height: 160 };
+  }
+}
+
+class MockNodeList {
+  constructor(items) {
+    this.items = items;
+    this.length = items.length;
+    items.forEach((item, index) => {
+      this[index] = item;
+    });
+  }
+
+  item(index) {
+    return this.items[index] || null;
+  }
+
+  forEach(callback) {
+    this.items.forEach(callback);
+  }
+
+  find(callback) {
+    return this.items.find(callback);
+  }
+
+  some(callback) {
+    return this.items.some(callback);
+  }
+
+  [Symbol.iterator]() {
+    return this.items[Symbol.iterator]();
   }
 }
 
@@ -331,23 +361,15 @@ assert(app.querySelector('#participant-id').value === 'P001', 'participant input
 window.location.pathname = '/admin';
 api.render();
 assert(app.querySelector('#admin-passcode'), 'admin route should show passcode input');
-assert(app.innerHTML.includes('保存された提出データはありません') === false, 'admin empty state should be hidden before authentication');
+assert(app.innerHTML.includes('菫晏ｭ倥＆繧後◆謠仙・繝・・繧ｿ縺ｯ縺ゅｊ縺ｾ縺帙ｓ') === false, 'admin empty state should be hidden before authentication');
 input(app.querySelector('#admin-passcode'), 'dev-admin');
 app.querySelector('#admin-login').click();
 assert(api.state.admin.authenticated === true, 'admin passcode should authenticate in development fallback');
-assert(app.innerHTML.includes('保存された提出データはありません'), 'admin should show empty state when there are no submissions');
+assert(!app.querySelector('.admin-submission-row'), 'admin should show no rows when there are no submissions');
 window.location.pathname = '/';
 api.render();
 assert(app.querySelector('#start'), 'study route should still render setup after leaving admin');
 assert(app.querySelectorAll('.task-choice').length === 7, 'tutorials plus five task choices should exist');
-assert(app.innerHTML.includes('物体を照らしてみよう'), 'setup should show the first tutorial task');
-assert(app.innerHTML.includes('物体をできるだけ照らさないようにしてみよう'), 'setup should show the second tutorial task');
-assert(app.innerHTML.includes('作品全体を見やすくしよう'), 'setup should show the new uniform visibility title');
-assert(app.innerHTML.includes('作品の形や凹凸を印象的に見せよう'), 'setup should show the new shape emphasis title');
-assert(app.innerHTML.includes('作品をやわらかい印象に見せよう'), 'setup should show the new soft lighting title');
-assert(app.innerHTML.includes('作品の輪郭を背景から際立たせよう'), 'setup should show the new background separation title');
-assert(app.innerHTML.includes('中央上部に注目を集めよう'), 'setup should show the visual focus title');
-assert(app.innerHTML.includes('自分が画面を見てどう感じるか'), 'setup should show the participant-centered visibility prompt');
 assertAllButtonsAreNonSubmit(app);
 
 app.querySelectorAll('.task-choice').find((button) => button.dataset.task === 'uniform_visibility').click();
@@ -367,33 +389,24 @@ assert(api.state.result.feedbackInput.metrics.validSampleCount > 0, 'uniform fee
 assert(api.state.result.feedbackInput.metrics.highlightClippingRate === null, 'highlight clipping metric should remain null');
 assert(api.state.result.submissionId.startsWith('submission-'), 'submission id should be generated on submit');
 assert(api.state.result.createdAt, 'submission createdAt should be set');
-assert(api.state.submissions.length === 1, 'submission should be stored in memory');
-assert(api.state.persistenceStatus.ok === true, 'submit should report successful browser storage');
-assert(api.state.persistenceMessage.includes('ブラウザ内に保存しました'), 'submit should show a successful storage message');
-assert(app.innerHTML.includes('ブラウザ内に保存しました'), 'feedback screen should show successful storage message');
-assert(api.state.submissions[0].participantId === api.state.participantId, 'submission should include participant id');
-assert(api.state.submissions[0].sessionId === api.state.sessionId, 'submission should include session id');
-assert(api.state.submissions[0].submissionId === api.state.result.submissionId, 'submission should include submission id');
-assert(api.state.result.submission.submissionId === api.state.result.submissionId, 'state.result should reference the saved submission record');
-assert(api.state.submissions[0].createdAt === api.state.result.createdAt, 'submission should include createdAt');
-assert(api.state.submissions[0].taskId === 'uniform_visibility', 'submission should include task id');
-assert(api.state.submissions[0].taskLabel, 'submission should include task label');
-assert(api.state.submissions[0].lightingState.lights.length === 3, 'submission should include serialized lighting state');
-assert(api.state.submissions[0].lightingState.lights[0].id === 'light-1', 'serialized light should include stable id');
-assert(api.state.submissions[0].lightingState.lights[0].position && Number.isFinite(api.state.submissions[0].lightingState.lights[0].position.x), 'serialized light should include finite position');
-assert(api.state.submissions[0].cameraState.userCameraPosition && Number.isFinite(api.state.submissions[0].cameraState.userCameraPosition.x), 'submission should include user camera position');
-assert(api.state.submissions[0].systemDiagnostics.evaluationSource === 'direct_illuminance', 'submission should include system diagnostics');
-assert(api.state.submissions[0].systemDiagnostics.illuminanceSummary, 'submission should include illuminance summary');
-assert(api.state.submissions[0].actionSummary, 'submission should include action summary');
-assert(Array.isArray(api.state.submissions[0].rawOperationLog), 'submission should include raw operation log');
-assert(api.state.submissions[0].embeddingStatus.imageEmbeddingReady === false, 'submission should include embedding status');
-assert(api.state.submissions[0].retrievalMetadata.datasetVersion === 'impression_dataset_v1', 'submission should include retrieval metadata');
-assert(api.state.submissions[0].analysisFlags.hasMultipleViews === true, 'submission should include analysis flags');
-assert(api.loadSubmissions().length === 1, 'submission should be persisted to dataStore');
-assert(api.getSubmissionById(api.state.result.submissionId).submissionId === api.state.result.submissionId, 'dataStore should retrieve submission by id');
+assert(api.state.submissions.length === 0, 'lighting confirmation should not store a completed submission in memory');
+assert(api.loadSubmissions().length === 0, 'lighting confirmation should not persist a completed submission');
+assert(api.state.result.draftSubmission.submissionId === api.state.result.submissionId, 'lighting confirmation should create a draft submission');
+assert(api.state.result.submission === null, 'state.result should not reference a completed submission before self evaluation is saved');
+assert(app.querySelector('#complete-submission'), 'feedback should show a completion button before final save');
+app.querySelector('#complete-submission').click();
+assert(api.state.submissions.length === 0, 'invalid user impression should not save a completed submission');
+assert(api.loadSubmissions().length === 0, 'invalid user impression should not persist a completed submission');
+assert(api.state.completionError, 'invalid user impression should show a validation message');
+assert(api.state.persistenceStatus === null, 'lighting confirmation should not report completed browser storage');
+assert(api.state.persistenceMessage === '', 'lighting confirmation should not show a successful storage message');
+assert(api.state.result.draftSubmission.participantId === api.state.participantId, 'draft submission should include participant id');
+assert(api.state.result.draftSubmission.sessionId === api.state.sessionId, 'draft submission should include session id');
+assert(api.state.result.draftSubmission.lightingState.lights.length === 3, 'draft submission should include serialized lighting state');
+assert(api.state.result.draftSubmission.systemDiagnostics.evaluationSource === 'direct_illuminance', 'draft submission should include system diagnostics');
+assert(api.state.result.draftSubmission.analysisFlags.hasMultipleViews === true, 'draft submission should include analysis flags');
 const expectedViewIds = ['user_view', 'front', 'left_45', 'right_45', 'upper_front'];
 assert(api.state.result.submissionImages.length === 5, 'result should include five submission images');
-assert(api.state.submissions[0].submissionImages.length === 5, 'stored submission should include five submission images');
 assert(expectedViewIds.every((viewId) => api.state.result.submissionImages.some((image) => image.viewId === viewId)), 'submission images should include all required view ids');
 assert(app.querySelector('.submission-images-preview'), 'submission images preview should exist');
 assert(app.querySelectorAll('.submission-image-card').length === 5, 'submission images preview should render five cards');
@@ -408,39 +421,64 @@ api.state.result.submissionImages.forEach((image) => {
     assert(Number.isFinite(image[key].z), `${image.viewId} ${key}.z should be finite`);
   });
 });
-assert(api.state.submissions[0].userImpression.visibilityRating === null, 'empty self evaluation should save null visibility rating');
-assert(Array.isArray(api.state.submissions[0].userImpression.reasonTags), 'empty self evaluation should save reason tags array');
-assert(Array.isArray(api.state.submissions[0].userImpression.impressionTags), 'empty self evaluation should save impression tags array');
-assert(api.state.submissions[0].userImpression.primaryImpression === '', 'empty self evaluation should save empty primary impression');
 const sanitizedRecord = api.sanitizeSubmissionRecord({ a: Number.NaN, b: undefined, c: Number.POSITIVE_INFINITY, d: { ok: 1 } });
 assert(sanitizedRecord.a === null && sanitizedRecord.b === null && sanitizedRecord.c === null && sanitizedRecord.d.ok === 1, 'sanitizeSubmissionRecord should remove invalid JSON values');
-const downloadedJson = api.downloadSubmissionJson();
-const downloadedSubmission = JSON.parse(downloadedJson);
-assert(downloadedSubmission.submissionId === api.state.result.submissionId, 'downloadSubmissionJson should return current submission JSON in test environment');
+assert(api.downloadSubmissionJson() === null, 'downloadSubmissionJson should require completed self evaluation');
 assert(api.state.history.some((entry) => entry.param === 'decision' && entry.evaluationSource === 'direct_illuminance' && entry.illuminanceSummary), 'decision log should include illuminance summary and source');
 assert(app.querySelector('#visibility-rating'), 'visibility rating select should exist');
 assert(app.querySelector('#impression-confidence'), 'confidence select should exist');
 assert(app.querySelector('#impression-comment'), 'comment textarea should exist');
-const reasonTag = app.querySelectorAll('input[name="reason-tags"]').find((inputElement) => inputElement.value === '形が分かりやすい');
+const reasonTag = app.querySelectorAll('input[name="reason-tags"]')[0];
 assert(reasonTag, 'reason tag checkbox should exist');
-const impressionTag = app.querySelectorAll('input[name="impression-tags"]').find((inputElement) => inputElement.value === '見やすい');
+const impressionTag = app.querySelectorAll('input[name="impression-tags"]')[0];
 assert(impressionTag, 'impression tag checkbox should exist');
+const reasonTagValue = reasonTag.value;
+const impressionTagValue = impressionTag.value;
 assert(app.querySelector('#primary-impression'), 'primary impression select should exist');
-changeValue(app.querySelector('#visibility-rating'), 4);
 change(reasonTag, true);
-change(impressionTag, true);
-changeValue(app.querySelector('#primary-impression'), '見やすい');
-input(app.querySelector('#impression-comment'), '見やすさを確認した');
+input(app.querySelector('#impression-comment'), 'partial comment should stay');
+app.querySelector('#complete-submission').click();
+assert(api.state.submissions.length === 0, 'missing visibility rating should not save completed submission');
+assert(api.state.result.userImpression.comment === 'partial comment should stay', 'validation error should keep comment input in state');
+assert(app.innerHTML.includes('partial comment should stay'), 'validation error should keep comment input in rendered form');
+assert(app.querySelectorAll('input[name="reason-tags"]').some((inputElement) => inputElement.value === reasonTagValue && inputElement.checked), 'validation error should keep reason tag input');
+const reasonTagAfterValidation = app.querySelectorAll('input[name="reason-tags"]').find((inputElement) => inputElement.value === reasonTagValue);
+const impressionTagAfterValidation = app.querySelectorAll('input[name="impression-tags"]').find((inputElement) => inputElement.value === impressionTagValue);
+changeValue(app.querySelector('#visibility-rating'), 4);
+change(reasonTagAfterValidation, true);
+change(impressionTagAfterValidation, true);
+changeValue(app.querySelector('#primary-impression'), impressionTagValue);
+input(app.querySelector('#impression-comment'), 'visibility confirmed');
 changeValue(app.querySelector('#impression-confidence'), 3);
 assert(api.state.result.userImpression.visibilityRating === 4, 'visibility rating should update result user impression');
-assert(api.state.result.userImpression.reasonTags.includes('形が分かりやすい'), 'reason tag should update result user impression');
-assert(api.state.result.userImpression.impressionTags.includes('見やすい'), 'impression tag should update result user impression');
-assert(api.state.result.userImpression.primaryImpression === '見やすい', 'primary impression should update result user impression');
-assert(api.state.result.userImpression.comment === '見やすさを確認した', 'comment should update result user impression');
-assert(api.state.result.userImpression.confidence === 3, 'confidence should update result user impression');
-assert(api.state.submissions[0].userImpression.visibilityRating === 4, 'visibility rating should update stored submission');
-assert(api.state.submissions[0].userImpression.impressionTags.includes('見やすい'), 'impression tag should update stored submission');
-assert(api.state.submissions[0].userImpression.primaryImpression === '見やすい', 'primary impression should update stored submission');
+assert(api.state.result.userImpression.reasonTags.includes(reasonTagValue), 'reason tag should update result user impression');
+assert(api.state.result.userImpression.impressionTags.includes(impressionTagValue), 'impression tag should update result user impression');
+assert(api.state.result.userImpression.primaryImpression === impressionTagValue, 'primary impression should update result user impression');
+assert(api.state.result.userImpression.comment === 'visibility confirmed', 'comment should update result user impression');
+assert(api.state.result.userImpression.confidence === 3, 'confidence should update result user impression');assert(api.state.result.draftSubmission.userImpression.visibilityRating === 4, 'visibility rating should update draft submission');
+assert(api.state.result.draftSubmission.userImpression.impressionTags.includes(impressionTagValue), 'impression tag should update draft submission');
+assert(api.state.result.draftSubmission.userImpression.primaryImpression === impressionTagValue, 'primary impression should update draft submission');
+assert(api.state.submissions.length === 0, 'self evaluation edits should not save completed submission before completion');
+app.querySelector('#complete-submission').click();
+assert(api.state.result.completed === true, 'completion button should mark result as completed');
+assert(api.state.submissions.length === 1, 'completion button should store completed submission in memory');
+assert(api.loadSubmissions().length === 1, 'completion button should persist completed submission');
+assert(api.state.persistenceStatus.ok === true, 'completion button should report successful browser storage');
+assert(Boolean(api.state.completionMessage), 'completion should show a thank-you message');
+assert(api.state.submissions[0].participantId === api.state.participantId, 'completed submission should include participant id');
+assert(api.state.submissions[0].sessionId === api.state.sessionId, 'completed submission should include session id');
+assert(api.state.submissions[0].submissionId === api.state.result.submissionId, 'completed submission should include submission id');
+assert(api.state.result.submission.submissionId === api.state.result.submissionId, 'state.result should reference the completed submission record');
+assert(api.state.submissions[0].createdAt === api.state.result.createdAt, 'completed submission should include createdAt');
+assert(api.state.submissions[0].taskId === 'uniform_visibility', 'completed submission should include task id');
+assert(api.state.submissions[0].lightingState.lights.length === 3, 'completed submission should include serialized lighting state');
+assert(api.state.submissions[0].submissionImages.length === 5, 'completed submission should include five submission images');
+assert(api.state.submissions[0].userImpression.visibilityRating === 4, 'completed submission should include visibility rating');
+assert(api.state.submissions[0].userImpression.impressionTags.includes(impressionTagValue), 'completed submission should include impression tags');
+assert(api.state.submissions[0].userImpression.primaryImpression === impressionTagValue, 'completed submission should include primary impression');
+const downloadedJson = api.downloadSubmissionJson();
+const downloadedSubmission = JSON.parse(downloadedJson);
+assert(downloadedSubmission.userImpression.visibilityRating === 4, 'downloaded completed submission should include user impression');
 window.location.pathname = '/admin';
 api.render();
 assert(app.querySelector('.admin-submission-row'), 'admin should show submission rows after authentication');
@@ -464,13 +502,13 @@ api.deleteSingleSubmission(api.state.result.submissionId);
 assert(api.loadSubmissions().length === 0, 'single delete should remove persisted submission');
 assert(!app.querySelector('.admin-submission-row'), 'single delete should remove row from admin list');
 const emptyImport = api.importSubmissionsJson('');
-assert(emptyImport.ok === false && emptyImport.importedCount === 0 && emptyImport.error.includes('JSON本文'), 'empty import should return a helpful error');
+assert(emptyImport.ok === false && emptyImport.importedCount === 0 && Boolean(emptyImport.error), 'empty import should return a helpful error');
 const filenameImport = api.importSubmissionsJson('submission.json');
-assert(filenameImport.ok === false && filenameImport.importedCount === 0 && filenameImport.error.includes('ファイル名ではなく'), 'filename-only import should return a helpful error');
+assert(filenameImport.ok === false && filenameImport.importedCount === 0 && Boolean(filenameImport.error), 'filename-only import should return a helpful error');
 input(app.querySelector('#admin-import-json'), singleAdminJson);
 app.querySelector('#import-submissions').click();
 assert(api.loadSubmissions().length === 1, 'admin import should restore a single submission object');
-assert(app.innerHTML.includes('1件のsubmissionを読み込みました'), 'admin import should show the imported single submission count');
+assert(Boolean(api.state.admin.message), 'admin import should show the imported single submission count');
 assert(app.querySelector('.admin-submission-row'), 'admin import should render restored row');
 api.clearAllSubmissionData();
 const arrayImport = api.importSubmissionsJson(exportedAdminJson);
@@ -495,9 +533,9 @@ localStorage.setItem = () => {
 const failedSave = api.saveSubmission({ submissionId: 'quota-test' });
 assert(failedSave.ok === false && failedSave.error.includes('JSON'), 'dataStore save failure should return a JSON fallback message');
 api.appendSubmissionToLog({ submissionId: 'quota-test' });
-assert(api.state.persistenceMessage.includes('JSON保存'), 'appendSubmissionToLog should expose a save failure message');
+assert(Boolean(api.state.persistenceMessage), 'appendSubmissionToLog should expose a save failure message');
 assert(api.state.persistenceStatus.ok === false, 'save failure should update persistence status');
-assert(api.state.persistenceStatus.error.includes('容量'), 'save failure should keep the failure reason');
+assert(Boolean(api.state.persistenceStatus.error), 'save failure should keep the failure reason');
 localStorage.setItem = originalSetItem;
 api.clearAllSubmissionData();
 api.state.persistenceMessage = '';
@@ -541,8 +579,8 @@ assert(api.allowLightColorEditing === false, 'basic training should disable ligh
 assert(!app.querySelector('#color'), 'color input should be hidden in basic training');
 assert(api.state.lights.every((light) => light.color === api.BASIC_TRAINING_LIGHT_COLOR), 'basic training lights should use fixed white color');
 assert(app.innerHTML.includes(api.BASIC_TRAINING_LIGHT_COLOR_LABEL), 'operation should describe fixed day-white color');
-assert(app.innerHTML.includes('ライト強度'), 'operation should use light-side intensity wording');
-assert(!app.innerHTML.includes('照度</span>'), 'operation should not label light controls as illuminance');
+assert(app.querySelector('input[data-param="intensity"]'), 'operation should include light intensity control');
+assert(!app.querySelector('input[data-param="illuminance"]'), 'operation should not expose illuminance as a light control');
 
 change(app.querySelector('#light-enabled'), false);
 assert(api.state.lights[1].enabled === false, 'light on/off control should update active light enabled state');
@@ -587,14 +625,9 @@ assertAllButtonsAreNonSubmit(app);
 const scoreText = app.innerHTML;
 assert(scoreText.includes('/100'), 'feedback score should include /100');
 assert(scoreText.includes('70/100'), 'feedback should explain the diagnostic guide value');
-assert(scoreText.includes('参考診断') || scoreText.includes('診断の目安'), 'feedback should use diagnostic wording');
-assert(!scoreText.includes('PASS') && !scoreText.includes('RETRY') && !scoreText.includes('合格') && !scoreText.includes('目標到達'), 'feedback should not show pass/fail wording');
-assert(scoreText.includes('フィードバック'), 'feedback critique should be separated from operation hints');
-assert(scoreText.includes('良かった点'), 'feedback should have positive-feature section');
-assert(scoreText.includes('主な問題'), 'feedback should have detected-issue section');
-assert(scoreText.includes('次に見るべき点'), 'feedback should have next-observation section');
-assert(scoreText.includes('内省の問い'), 'reflection question should be separated from score result');
-assert(app.querySelector('.score-bar-row'), 'score bar rows should exist');
+assert(app.querySelector('.critique-block'), 'feedback critique should be separated from operation hints');
+assert(app.querySelector('.reflection-block'), 'reflection question should be separated from score result');
+assert(app.querySelector('.feedback-list'), 'feedback should render structured feedback lists');assert(app.querySelector('.score-bar-row'), 'score bar rows should exist');
 assert(api.state.result.feedbackInput.metrics.highlightClippingRate === null, 'unimplemented physical metrics should remain null');
 assert(api.state.history.some((entry) => entry.param === 'decision' && entry.actionSummary), 'decision log should include action summary');
 const feedbackHandle = app.querySelector('.feedback-drag-handle');

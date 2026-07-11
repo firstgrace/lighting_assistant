@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'lighting-assistant-submissions-v1';
+﻿const STORAGE_KEY = 'lighting-assistant-submissions-v1';
 
 export function saveSubmission(submission) {
   try {
