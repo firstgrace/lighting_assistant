@@ -240,6 +240,7 @@ const state = {
   persistenceStatus: null,
   completionMessage: '',
   completionError: '',
+  feedbackImageViewId: 'user_view',
   admin: { authenticated: false, passcodeInput: '', selectedSubmissionId: '', error: '', message: '', importText: '' },
   result: null,
 };
@@ -597,6 +598,7 @@ function render() {
 }
 
 function renderSetup() {
+  setRealtimeSceneVisible(true);
   app.innerHTML = `
     <main class="screen setup-screen">
       <section class="setup-card">
@@ -667,6 +669,7 @@ function renderSetup() {
 }
 
 function renderOperation() {
+  setRealtimeSceneVisible(true);
   const task = currentTask();
   const light = state.lights[state.activeLight];
   const hints = showHint(task, state);
@@ -767,34 +770,40 @@ function renderOperation() {
 }
 
 function renderFeedback() {
+  setRealtimeSceneVisible(false);
   const task = currentTask();
   const result = state.result;
   app.innerHTML = `
-    <main class="screen feedback-screen is-scrollable">
-      <section class="feedback-card">
+    <main class="screen feedback-screen scene-obscured">
+      <section class="feedback-card evaluation-card">
         <div class="feedback-head feedback-drag-handle">
           <div>
             <h1 class="feedback-title">\u304a\u984c\uff1a${task.label}</h1>
-            <p class="muted">${task.description}</p>
+            <p class="muted">\u78ba\u5b9a\u6642\u306e\u753b\u50cf\u3092\u898b\u306a\u304c\u3089\u3075\u308a\u8fd4\u308a\u307e\u3059</p>
           </div>
-          <button type="button" class="ghost-btn" id="new-task">\u304a\u984c\u9078\u629e\u3078</button>
+          <div class="evaluation-nav">
+            <button type="button" class="ghost-btn" id="retry">\u30ea\u30c8\u30e9\u30a4</button>
+            ${state.result?.completed ? '<button type="button" class="ghost-btn" id="download-submission">JSON\u4fdd\u5b58</button>' : ''}
+            <button type="button" class="ghost-btn" id="next-task">\u6b21\u306e\u304a\u984c\u3078</button>
+            <button type="button" class="ghost-btn" id="new-task">\u304a\u984c\u9078\u629e\u3078</button>
+          </div>
         </div>
-        <div class="feedback-body">
-          <div class="score-panel">
+        <div class="feedback-body evaluation-layout">
+          <section class="score-panel evaluation-form-column">
             ${renderCompletionMessage()}
             ${state.result?.completed ? renderPersistenceMessage() : ''}
-            ${showScoreResult(result)}
-            ${showPerformanceCritique(result)}
-            ${showReflectionQuestion(result)}
             ${renderUserImpressionForm(result.userImpression)}
-            ${renderSubmissionImagesPreview(result.submissionImages)}
-          </div>
-          ${supportCondition.showScoreAfterDecision ? `<div class="score-bars-panel">${scoreBars(result.allScores, state.taskId)}</div>` : ''}
-        </div>
-        <div class="feedback-actions">
-          <button type="button" class="secondary-btn" id="retry">\u30ea\u30c8\u30e9\u30a4</button>
-          ${state.result?.completed ? '<button type="button" class="secondary-btn" id="download-submission">JSON\u4fdd\u5b58</button>' : '<button type="button" class="secondary-btn" id="complete-submission">\u8a55\u4fa1\u3092\u4fdd\u5b58\u3057\u3066\u5b8c\u4e86</button>'}
-          <button type="button" class="secondary-btn" id="next-task">\u6b21\u306e\u304a\u984c\u3078</button>
+            <details class="diagnostics-disclosure">
+              <summary>\u30b7\u30b9\u30c6\u30e0\u8a3a\u65ad\u3092\u78ba\u8a8d</summary>
+              <div class="diagnostics-content">
+                ${showScoreResult(result)}
+                ${showPerformanceCritique(result)}
+                ${showReflectionQuestion(result)}
+                ${supportCondition.showScoreAfterDecision ? `<div class="score-bars-panel">${scoreBars(result.allScores, state.taskId)}</div>` : ''}
+              </div>
+            </details>
+          </section>
+          ${renderSubmissionImagesPreview(result.submissionImages, task)}
         </div>
       </section>
     </main>
@@ -816,10 +825,19 @@ function renderFeedback() {
   app.querySelector('#complete-submission')?.addEventListener('click', completeSubmission);
   bindFeedbackDrag();
   bindUserImpressionForm();
+  bindSubmissionImageViewer();
   applyFeedbackPosition();
 }
 
+function setRealtimeSceneVisible(visible) {
+  const canvas = document.querySelector('#scene');
+  if (!canvas?.style) return;
+  canvas.style.visibility = visible ? 'visible' : 'hidden';
+  canvas.style.pointerEvents = visible ? 'auto' : 'none';
+}
+
 function renderAdminView() {
+  setRealtimeSceneVisible(false);
   const submissions = getSubmissionStore();
   const selected = getSelectedAdminSubmission(submissions);
   app.innerHTML = `
@@ -886,8 +904,27 @@ function renderPersistenceMessage() {
 }
 
 function renderCompletionMessage() {
-  if (state.completionError) return `<p class="admin-error">${escapeHtml(state.completionError)}</p>`;
+  if (state.completionError) return '';
   if (state.completionMessage) return `<p class="admin-message">${escapeHtml(state.completionMessage)}</p>`;
+  return '';
+}
+
+function impressionErrorTarget(message = state.completionError) {
+  if (message === '\u898b\u3084\u3059\u3055\u8a55\u4fa1\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002') return 'visibility';
+  if (message === '\u7406\u7531\u30bf\u30b0\u30921\u3064\u4ee5\u4e0a\u9078\u3076\u304b\u3001\u30b3\u30e1\u30f3\u30c8\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002') return 'reasonOrComment';
+  return '';
+}
+
+function renderImpressionCardError(target) {
+  if (!state.completionError) return '';
+  const errorTarget = impressionErrorTarget(state.completionError);
+  if ((target === 'general' && errorTarget) || (target !== 'general' && errorTarget !== target)) return '';
+  if (target === 'general' && !errorTarget) {
+    return `<p class="question-error" role="alert">${escapeHtml(state.completionError)}</p>`;
+  }
+  if (target === errorTarget) {
+    return `<p class="question-error" role="alert">${escapeHtml(state.completionError)}</p>`;
+  }
   return '';
 }
 
@@ -1429,6 +1466,7 @@ function submit() {
   const current = task.scoreEnabled === false ? null : currentScore?.score ?? 0;
   const feedbackInput = buildFeedbackInput(task, current, allScores, state);
   const submissionImages = captureSubmissionImages();
+  state.feedbackImageViewId = 'user_view';
   state.result = {
     submissionId,
     createdAt,
@@ -1692,18 +1730,24 @@ function showReflectionQuestion(result) {
 
 function renderUserImpressionForm(userImpression) {
   const impression = userImpression || createEmptyUserImpression();
+  const selectedImpressionTags = availablePrimaryImpressions(impression.impressionTags);
+  const primaryImpression = normalizePrimaryImpression(selectedImpressionTags, impression.primaryImpression);
   return `
     <section class="impression-form">
-      <h2>\u3042\u306a\u305f\u306e\u898b\u3048\u65b9</h2>
-      <fieldset class="visibility-rating-field">
-        <legend>\u3053\u306e\u7167\u660e\u306f\u898b\u3084\u3059\u3044\u3068\u611f\u3058\u307e\u3057\u305f\u304b\uff1f</legend>
+      <header class="impression-form-head">
+        <h2>\u898b\u3048\u65b9\u306e\u3075\u308a\u8fd4\u308a</h2>
+        <p>\u3042\u306a\u305f\u304c\u4f5c\u3063\u305f\u7167\u660e\u306b\u3064\u3044\u3066\u3001\u611f\u3058\u305f\u3053\u3068\u3092\u6559\u3048\u3066\u304f\u3060\u3055\u3044</p>
+      </header>
+      <fieldset class="reflection-question-card visibility-rating-field question-card--visibility">
+        <legend class="reflection-question-heading"><span class="question-number">1</span><span>\u3053\u306e\u7167\u660e\u306f\u898b\u3084\u3059\u3044\u3068\u611f\u3058\u307e\u3057\u305f\u304b\uff1f</span></legend>
+        ${renderImpressionCardError('visibility')}
         <div class="visibility-rating-options" id="visibility-rating">
           ${visibilityRatingOptions(impression.visibilityRating)}
         </div>
       </fieldset>
-      <fieldset class="tag-fieldset tag-section-reasons">
-        <legend>\u305d\u3046\u611f\u3058\u305f\u7406\u7531\u306b\u8fd1\u3044\u3082\u306e\u3092\u9078\u3093\u3067\u304f\u3060\u3055\u3044</legend>
-        <p class="tag-help">\u898b\u3048\u65b9\u306b\u3064\u3044\u3066\u3001\u5f53\u3066\u306f\u307e\u308b\u3082\u306e\u3092\u8907\u6570\u9078\u3079\u307e\u3059</p>
+      <fieldset class="reflection-question-card tag-fieldset tag-section-reasons question-card--reasons">
+        <legend class="reflection-question-heading"><span class="question-number">2</span><span>\u305d\u3046\u611f\u3058\u305f\u7406\u7531\u306b\u8fd1\u3044\u3082\u306e\u3092\u9078\u3093\u3067\u304f\u3060\u3055\u3044</span></legend>
+        <p class="question-help tag-help">\u898b\u3048\u65b9\u306b\u3064\u3044\u3066\u3001\u5f53\u3066\u306f\u307e\u308b\u3082\u306e\u3092\u8907\u6570\u9078\u3079\u307e\u3059</p>
         <div class="tag-options">
           ${reasonTagOptions.map((tag) => `
             <label class="tag-check">
@@ -1713,9 +1757,9 @@ function renderUserImpressionForm(userImpression) {
           `).join('')}
         </div>
       </fieldset>
-      <fieldset class="tag-fieldset tag-section-impressions">
-        <legend>\u3053\u306e\u7167\u660e\u304b\u3089\u53d7\u3051\u305f\u5370\u8c61\u3092\u9078\u3093\u3067\u304f\u3060\u3055\u3044</legend>
-        <p class="tag-help">\u96f0\u56f2\u6c17\u3084\u611f\u3058\u65b9\u306b\u3064\u3044\u3066\u3001\u5f53\u3066\u306f\u307e\u308b\u3082\u306e\u3092\u8907\u6570\u9078\u3079\u307e\u3059</p>
+      <fieldset class="reflection-question-card tag-fieldset tag-section-impressions question-card--impressions">
+        <legend class="reflection-question-heading"><span class="question-number">3</span><span>\u3053\u306e\u7167\u660e\u304b\u3089\u53d7\u3051\u305f\u5370\u8c61\u3092\u9078\u3093\u3067\u304f\u3060\u3055\u3044</span></legend>
+        <p class="question-help tag-help">\u96f0\u56f2\u6c17\u3084\u611f\u3058\u65b9\u306b\u3064\u3044\u3066\u3001\u5f53\u3066\u306f\u307e\u308b\u3082\u306e\u3092\u8907\u6570\u9078\u3079\u307e\u3059</p>
         <div class="tag-options">
           ${impressionTagOptions.map((tag) => `
             <label class="tag-check">
@@ -1725,53 +1769,109 @@ function renderUserImpressionForm(userImpression) {
           `).join('')}
         </div>
       </fieldset>
-      <label class="form-row">
-        <span>\u4ee3\u8868\u7684\u306a\u5370\u8c61</span>
-        <select id="primary-impression">
-          <option value="">--</option>
-          ${impressionTagOptions.map((tag) => `<option value="${tag}" ${impression.primaryImpression === tag ? 'selected' : ''}>${tag}</option>`).join('')}
-        </select>
-      </label>
-      <label class="form-row">
-        <span>\u30b3\u30e1\u30f3\u30c8</span>
-        <textarea id="impression-comment" rows="3">${escapeHtml(impression.comment)}</textarea>
-      </label>
-      <label class="form-row">
-        <span>\u81ea\u4fe1\u5ea6</span>
-        <select id="impression-confidence">
-          ${ratingOptions(impression.confidence)}
-        </select>
-      </label>
+      <fieldset class="reflection-question-card primary-impression-field question-card--primary">
+        <legend class="reflection-question-heading"><span class="question-number">4</span><span>\u9078\u3093\u3060\u4e2d\u3067\u3001\u4e00\u756a\u8fd1\u3044\u5370\u8c61\u306f\u3069\u308c\u3067\u3059\u304b\uff1f</span></legend>
+        <p class="question-help primary-impression-help">\u7279\u306b\u5f37\u304f\u611f\u3058\u305f\u3082\u306e\u30921\u3064\u9078\u3093\u3067\u304f\u3060\u3055\u3044</p>
+        ${selectedImpressionTags.length
+    ? `<div class="primary-impression-options" id="primary-impression">
+              ${primaryImpressionOptions(selectedImpressionTags, primaryImpression)}
+            </div>`
+    : '<p class="primary-impression-empty">\u5148\u306b\u3001\u53d7\u3051\u305f\u5370\u8c61\u30921\u3064\u4ee5\u4e0a\u9078\u3093\u3067\u304f\u3060\u3055\u3044</p>'}
+      </fieldset>
+      <fieldset class="reflection-question-card comment-field question-card--comment">
+        <legend class="reflection-question-heading"><span class="question-number">5</span><span>\u305d\u3046\u611f\u3058\u305f\u7406\u7531\u3084\u3001\u6c17\u306b\u306a\u3063\u305f\u898b\u3048\u65b9\u3092\u4e00\u8a00\u3067\u6559\u3048\u3066\u304f\u3060\u3055\u3044</span></legend>
+        <p class="question-help comment-help">\u3069\u3053\u304c\u3001\u3069\u306e\u3088\u3046\u306b\u898b\u3048\u305f\u304b\u3092\u66f8\u3044\u3066\u304f\u3060\u3055\u3044</p>
+        <textarea id="impression-comment" rows="4" placeholder="\u4f8b\uff1a\u5168\u4f53\u306f\u660e\u308b\u3044\u304c\u3001\u5f71\u304c\u5f31\u304f\u3066\u5c11\u3057\u5e73\u5766\u306b\u898b\u3048\u305f">${escapeHtml(impression.comment)}</textarea>
+        ${renderImpressionCardError('reasonOrComment')}
+      </fieldset>
+      ${state.result?.completed ? '' : '<div class="impression-form-actions"><button type="button" class="primary-btn" id="complete-submission">\u8a55\u4fa1\u3092\u4fdd\u5b58\u3057\u3066\u5b8c\u4e86</button></div>'}
+      ${renderImpressionCardError('general')}
     </section>
   `;
 }
 
-function renderSubmissionImagesPreview(images = []) {
-  if (!images.length) {
+const feedbackViewLabels = {
+  user_view: '\u81ea\u5206\u306e\u8996\u70b9',
+  front: '\u6b63\u9762',
+  left_45: '\u5de645\u5ea6',
+  right_45: '\u53f345\u5ea6',
+  upper_front: '\u4e0a\u65b9\u6b63\u9762',
+};
+
+function feedbackSubmissionImages(images = []) {
+  const resultImages = Array.isArray(images) && images.length
+    ? images
+    : state.result?.draftSubmission?.submissionImages || [];
+  return Object.keys(feedbackViewLabels)
+    .map((viewId) => resultImages.find((image) => image?.viewId === viewId))
+    .filter((image) => image && validDataUrl(image.dataUrl));
+}
+
+function renderSubmissionImagesPreview(images = [], task = currentTask()) {
+  const availableImages = feedbackSubmissionImages(images);
+  const expectedCount = Object.keys(feedbackViewLabels).length;
+  const selectedImage = availableImages.find((image) => image.viewId === state.feedbackImageViewId)
+    || availableImages.find((image) => image.viewId === 'user_view')
+    || availableImages[0];
+  if (!selectedImage) {
     return `
-      <section class="submission-images-preview">
-        <h2>\u4fdd\u5b58\u3055\u308c\u305f\u8996\u70b9\u753b\u50cf</h2>
-        <p class="score-note">\u4fdd\u5b58\u3055\u308c\u305f\u8996\u70b9\u753b\u50cf\u306f\u3042\u308a\u307e\u305b\u3093</p>
-      </section>
+      <aside class="submission-images-preview evaluation-image-column">
+        ${renderEvaluationImageHeading(task)}
+        <div class="evaluation-image-empty">\u7167\u660e\u753b\u50cf\u3092\u8868\u793a\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f</div>
+      </aside>
     `;
   }
+  state.feedbackImageViewId = selectedImage.viewId;
   return `
-    <section class="submission-images-preview">
-      <h2>\u4fdd\u5b58\u3055\u308c\u305f\u8996\u70b9\u753b\u50cf</h2>
-      <div class="submission-image-grid">
-        ${images.map((image) => `
-          <article class="submission-image-card">
-            <h3>${escapeHtml(image.viewId || '')}</h3>
-            <img src="${validDataUrl(image.dataUrl) ? image.dataUrl : transparentPixelDataUrl()}" alt="${escapeHtml(image.viewId || '')}" />
-            <dl>
-              <div><dt>cameraPosition</dt><dd>${formatVectorForDisplay(image.cameraPosition)}</dd></div>
-              <div><dt>cameraTarget</dt><dd>${formatVectorForDisplay(image.cameraTarget)}</dd></div>
-            </dl>
-          </article>
+    <aside class="submission-images-preview evaluation-image-column">
+      ${renderEvaluationImageHeading(task)}
+      <figure class="evaluation-main-figure">
+        <img id="feedback-main-image" src="${selectedImage.dataUrl}" alt="${escapeHtml(feedbackViewLabels[selectedImage.viewId])}" />
+        <figcaption id="feedback-main-image-label">${escapeHtml(feedbackViewLabels[selectedImage.viewId])}</figcaption>
+      </figure>
+      <div class="evaluation-thumbnails" aria-label="\u4fdd\u5b58\u3055\u308c\u305f\u8996\u70b9\u753b\u50cf">
+        ${availableImages.map((image) => `
+          <button type="button" class="evaluation-thumbnail ${image.viewId === selectedImage.viewId ? 'is-selected' : ''}" data-feedback-view-id="${image.viewId}" aria-pressed="${image.viewId === selectedImage.viewId}">
+            <img src="${image.dataUrl}" alt="" />
+            <span>${escapeHtml(feedbackViewLabels[image.viewId])}</span>
+          </button>
         `).join('')}
       </div>
-    </section>
+      ${availableImages.length < expectedCount ? '<p class="image-availability-note">\u4e00\u90e8\u306e\u8996\u70b9\u753b\u50cf\u3092\u8868\u793a\u3067\u304d\u307e\u305b\u3093</p>' : ''}
+    </aside>
   `;
+}
+
+function renderEvaluationImageHeading(task) {
+  return `
+    <header class="evaluation-image-head">
+      <h2>\u3042\u306a\u305f\u304c\u4f5c\u6210\u3057\u305f\u7167\u660e</h2>
+      <p class="evaluation-task-label">\u304a\u984c</p>
+      <p class="evaluation-task"><strong>${escapeHtml(task?.label || '')}</strong><span>${escapeHtml(task?.description || '')}</span></p>
+    </header>
+  `;
+}
+
+function bindSubmissionImageViewer() {
+  const images = feedbackSubmissionImages(state.result?.submissionImages);
+  const mainImage = app.querySelector('#feedback-main-image');
+  const mainLabel = app.querySelector('#feedback-main-image-label');
+  if (!mainImage || !mainLabel) return;
+  app.querySelectorAll('[data-feedback-view-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const image = images.find((item) => item.viewId === button.dataset.feedbackViewId);
+      if (!image) return;
+      state.feedbackImageViewId = image.viewId;
+      mainImage.src = image.dataUrl;
+      mainImage.alt = feedbackViewLabels[image.viewId];
+      mainLabel.textContent = feedbackViewLabels[image.viewId];
+      Array.from(app.querySelectorAll('[data-feedback-view-id]')).forEach((option) => {
+        const selected = option.dataset.feedbackViewId === image.viewId;
+        option.classList.toggle?.('is-selected', selected);
+        option.setAttribute?.('aria-pressed', String(selected));
+      });
+    });
+  });
 }
 
 function formatVectorForDisplay(vector) {
@@ -1808,6 +1908,25 @@ function visibilityRatingOptions(selected) {
   `).join('');
 }
 
+function availablePrimaryImpressions(impressionTags) {
+  const selectedTags = Array.isArray(impressionTags) ? impressionTags : [];
+  return impressionTagOptions.filter((tag) => selectedTags.includes(tag));
+}
+
+function normalizePrimaryImpression(availableTags, primaryImpression) {
+  if (availableTags.length === 1) return availableTags[0];
+  return availableTags.includes(primaryImpression) ? primaryImpression : '';
+}
+
+function primaryImpressionOptions(availableTags, selected) {
+  return availableTags.map((tag) => `
+    <label class="primary-impression-option">
+      <input type="radio" name="primaryImpression" value="${tag}" ${selected === tag ? 'checked' : ''} />
+      <span>${tag}</span>
+    </label>
+  `).join('');
+}
+
 function bindUserImpressionForm() {
   const form = app.querySelector('.impression-form');
   if (!form || !state.result) return;
@@ -1815,14 +1934,28 @@ function bindUserImpressionForm() {
   app.querySelectorAll('input[name="visibilityRating"]').forEach((input) => {
     input.addEventListener('change', sync);
   });
-  app.querySelector('#impression-confidence')?.addEventListener('change', sync);
   app.querySelector('#impression-comment')?.addEventListener('input', sync);
-  app.querySelector('#primary-impression')?.addEventListener('change', sync);
+  app.querySelectorAll('input[name="primaryImpression"]').forEach((input) => {
+    input.addEventListener('change', (event) => {
+      Array.from(app.querySelectorAll('input[name="primaryImpression"]')).forEach((option) => {
+        option.checked = option === event.target;
+      });
+      sync();
+    });
+  });
   app.querySelectorAll('input[name="reasonTags"]').forEach((input) => {
     input.addEventListener('change', sync);
   });
   app.querySelectorAll('input[name="impressionTags"]').forEach((input) => {
-    input.addEventListener('change', sync);
+    input.addEventListener('change', () => {
+      const next = readUserImpressionFromForm();
+      next.primaryImpression = normalizePrimaryImpression(
+        availablePrimaryImpressions(next.impressionTags),
+        next.primaryImpression,
+      );
+      updateUserImpression(next);
+      renderFeedback();
+    });
   });
 }
 
@@ -1839,9 +1972,10 @@ function readUserImpressionFromForm() {
     impressionTags: impressionInputs
       .filter((input) => input.checked)
       .map((input) => input.value),
-    primaryImpression: app.querySelector('#primary-impression')?.value || '',
+    primaryImpression: Array.from(app.querySelectorAll('input[name="primaryImpression"]'))
+      .find((input) => input.checked)?.value || '',
     comment: app.querySelector('#impression-comment')?.value || '',
-    confidence: nullableFormNumber(app.querySelector('#impression-confidence')?.value),
+    confidence: null,
   };
 }
 
