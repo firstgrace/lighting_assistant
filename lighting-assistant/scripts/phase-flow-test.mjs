@@ -409,8 +409,24 @@ const expectedViewIds = ['user_view', 'front', 'left_45', 'right_45', 'upper_fro
 assert(api.state.result.submissionImages.length === 5, 'result should include five submission images');
 assert(expectedViewIds.every((viewId) => api.state.result.submissionImages.some((image) => image.viewId === viewId)), 'submission images should include all required view ids');
 assert(app.querySelector('.submission-images-preview'), 'submission images preview should exist');
-assert(app.querySelectorAll('.submission-image-card').length === 5, 'submission images preview should render five cards');
+assert(app.querySelector('#feedback-main-image'), 'evaluation should show a large saved image');
+assert(app.querySelectorAll('.evaluation-thumbnail').length === 5, 'evaluation should render five saved-view thumbnails');
 assert(expectedViewIds.every((viewId) => app.innerHTML.includes(viewId)), 'submission images preview should show all required view ids');
+assert(app.querySelector('.evaluation-task'), 'evaluation image column should show the current task');
+assert(document.querySelector('#scene').style.visibility === 'hidden', 'feedback phase should hide the realtime 3D canvas');
+const frontThumbnail = Array.from(app.querySelectorAll('[data-feedback-view-id]')).find((button) => button.dataset.feedbackViewId === 'front');
+frontThumbnail.click();
+assert(api.state.feedbackImageViewId === 'front', 'thumbnail click should switch the selected feedback view');
+assert(app.querySelector('#feedback-main-image').src === api.state.result.submissionImages.find((image) => image.viewId === 'front').dataUrl, 'thumbnail click should switch the large saved image');
+const savedSubmissionImages = api.state.result.submissionImages;
+const savedDraftImages = api.state.result.draftSubmission.submissionImages;
+api.state.result.submissionImages = [];
+api.state.result.draftSubmission.submissionImages = [];
+api.render();
+assert(app.querySelector('.evaluation-image-empty'), 'feedback should remain usable when submission images are missing');
+api.state.result.submissionImages = savedSubmissionImages;
+api.state.result.draftSubmission.submissionImages = savedDraftImages;
+api.render();
 api.state.result.submissionImages.forEach((image) => {
   assert(image.dataUrl.startsWith('data:image/jpeg'), `image ${image.viewId} should be saved as JPEG`);
   assert(image.dataUrl.includes('420x263'), `image ${image.viewId} should be downscaled for storage`);
@@ -425,11 +441,24 @@ const sanitizedRecord = api.sanitizeSubmissionRecord({ a: Number.NaN, b: undefin
 assert(sanitizedRecord.a === null && sanitizedRecord.b === null && sanitizedRecord.c === null && sanitizedRecord.d.ok === 1, 'sanitizeSubmissionRecord should remove invalid JSON values');
 assert(api.downloadSubmissionJson() === null, 'downloadSubmissionJson should require completed self evaluation');
 assert(api.state.history.some((entry) => entry.param === 'decision' && entry.evaluationSource === 'direct_illuminance' && entry.illuminanceSummary), 'decision log should include illuminance summary and source');
+assert(app.innerHTML.includes('\u898b\u3048\u65b9\u306e\u3075\u308a\u8fd4\u308a'), 'reflection form should show its title');
+assert(app.querySelectorAll('.reflection-question-card').length === 5, 'reflection form should render five question cards');
+assert(app.querySelectorAll('.question-number').length === 5, 'reflection form should render five question numbers');
+[1, 2, 3, 4, 5].forEach((number) => {
+  assert(app.innerHTML.includes(`<span class="question-number">${number}</span>`), `reflection form should show question number ${number}`);
+});
+assert(app.querySelector('.impression-form-actions'), 'completion action should appear after the question cards');
+assert(app.innerHTML.indexOf('question-card--comment') < app.innerHTML.indexOf('id="complete-submission"'), 'completion button should follow the fifth question card');
 assert(app.querySelector('#visibility-rating'), 'visibility rating button group should exist');
 assert(app.querySelectorAll('input[name="visibilityRating"]').length === 5, 'visibility rating should render five radio buttons');
 assert(app.querySelectorAll('.visibility-rating-option').length === 5, 'visibility rating should render five large option labels');
-assert(app.querySelector('#impression-confidence'), 'confidence select should exist');
+assert(!app.querySelector('#impression-confidence'), 'confidence UI should not be rendered');
+assert(app.querySelectorAll('input[name="confidence"]').length === 0, 'confidence inputs should not be rendered');
+assert(api.state.result.userImpression.confidence === null, 'new user impressions should initialize confidence as null');
 assert(app.querySelector('#impression-comment'), 'comment textarea should exist');
+assert(app.innerHTML.includes('placeholder="\u4f8b\uff1a\u5168\u4f53\u306f\u660e\u308b\u3044\u304c\u3001\u5f71\u304c\u5f31\u304f\u3066\u5c11\u3057\u5e73\u5766\u306b\u898b\u3048\u305f"'), 'comment textarea should provide the lighting example placeholder');
+assert(app.querySelector('.comment-help'), 'comment textarea should include concise input guidance');
+assert(app.innerHTML.includes('\u305d\u3046\u611f\u3058\u305f\u7406\u7531\u3084') && app.innerHTML.includes('\u3069\u3053\u304c\u3001\u3069\u306e\u3088\u3046\u306b\u898b\u3048\u305f\u304b'), 'comment field should explain what to describe');
 assert(app.querySelector('.tag-section-reasons'), 'reason tags should have a distinct section');
 assert(app.querySelector('.tag-section-impressions'), 'impression tags should have a distinct section');
 assert(app.querySelectorAll('.tag-help').length >= 2, 'tag sections should include explanatory help text');
@@ -441,13 +470,34 @@ assert(app.querySelectorAll('input[name="reasonTags"]').length > 1, 'reason tags
 assert(app.querySelectorAll('input[name="impressionTags"]').length > 1, 'impression tags should provide multiple tag buttons');
 const reasonTagValue = reasonTag.value;
 const impressionTagValue = impressionTag.value;
-assert(app.querySelector('#primary-impression'), 'primary impression select should exist');
-change(reasonTag, true);
+assert(app.querySelector('.primary-impression-field'), 'primary impression should have a dedicated button field');
+assert(app.querySelector('.primary-impression-empty'), 'primary impression should guide users before an impression tag is selected');
+assert(app.querySelectorAll('input[name="primaryImpression"]').length === 0, 'primary impression should have no options before impression tags are selected');
+change(impressionTag, true);
+assert(api.state.result.userImpression.primaryImpression === impressionTagValue, 'a single impression tag should become the primary impression automatically');
+assert(app.querySelectorAll('input[name="primaryImpression"]').length === 1, 'a single impression tag should render one primary option');
+assert(app.querySelector('input[name="primaryImpression"]').checked, 'the only primary option should be selected');
+const secondImpressionTag = Array.from(app.querySelectorAll('input[name="impressionTags"]')).find((inputElement) => inputElement.value !== impressionTagValue);
+assert(secondImpressionTag, 'a second impression tag should be available for primary impression testing');
+const secondImpressionTagValue = secondImpressionTag.value;
+change(secondImpressionTag, true);
+const primaryInputs = Array.from(app.querySelectorAll('input[name="primaryImpression"]'));
+assert(primaryInputs.length === 2, 'multiple impression tags should render only their matching primary options');
+assert(primaryInputs.every((inputElement) => [impressionTagValue, secondImpressionTagValue].includes(inputElement.value)), 'primary options should match selected impression tags only');
+const secondPrimaryInput = primaryInputs.find((inputElement) => inputElement.value === secondImpressionTagValue);
+change(secondPrimaryInput, true);
+assert(api.state.result.userImpression.primaryImpression === secondImpressionTagValue, 'primary impression should update from its button selection');
+const secondImpressionTagAfterSelection = Array.from(app.querySelectorAll('input[name="impressionTags"]')).find((inputElement) => inputElement.value === secondImpressionTagValue);
+change(secondImpressionTagAfterSelection, false);
+assert(api.state.result.userImpression.primaryImpression === impressionTagValue, 'removing the selected primary impression should not leave an invalid value');
+const reasonTagAfterPrimaryUpdate = Array.from(app.querySelectorAll('input[name="reasonTags"]')).find((inputElement) => inputElement.value === reasonTagValue);
+change(reasonTagAfterPrimaryUpdate, true);
 input(app.querySelector('#impression-comment'), 'partial comment should stay');
 app.querySelector('#complete-submission').click();
 assert(api.state.submissions.length === 0, 'missing visibility rating should not save completed submission');
 assert(api.state.result.userImpression.comment === 'partial comment should stay', 'validation error should keep comment input in state');
 assert(app.innerHTML.includes('partial comment should stay'), 'validation error should keep comment input in rendered form');
+assert(app.querySelector('.question-card--visibility .question-error') || app.querySelector('.question-error'), 'validation error should be shown near its question card');
 assert(app.querySelectorAll('input[name="reasonTags"]').some((inputElement) => inputElement.value === reasonTagValue && inputElement.checked), 'validation error should keep reason tag input');
 const reasonTagAfterValidation = app.querySelectorAll('input[name="reasonTags"]').find((inputElement) => inputElement.value === reasonTagValue);
 const impressionTagAfterValidation = app.querySelectorAll('input[name="impressionTags"]').find((inputElement) => inputElement.value === impressionTagValue);
@@ -455,15 +505,13 @@ const visibilityRating4 = app.querySelectorAll('input[name="visibilityRating"]')
 change(visibilityRating4, true);
 change(reasonTagAfterValidation, true);
 change(impressionTagAfterValidation, true);
-changeValue(app.querySelector('#primary-impression'), impressionTagValue);
 input(app.querySelector('#impression-comment'), 'visibility confirmed');
-changeValue(app.querySelector('#impression-confidence'), 3);
 assert(api.state.result.userImpression.visibilityRating === 4, 'visibility rating should update result user impression');
 assert(api.state.result.userImpression.reasonTags.includes(reasonTagValue), 'reason tag should update result user impression');
 assert(api.state.result.userImpression.impressionTags.includes(impressionTagValue), 'impression tag should update result user impression');
 assert(api.state.result.userImpression.primaryImpression === impressionTagValue, 'primary impression should update result user impression');
 assert(api.state.result.userImpression.comment === 'visibility confirmed', 'comment should update result user impression');
-assert(api.state.result.userImpression.confidence === 3, 'confidence should update result user impression');assert(api.state.result.draftSubmission.userImpression.visibilityRating === 4, 'visibility rating should update draft submission');
+assert(api.state.result.userImpression.confidence === null, 'new user impressions should keep confidence as null');assert(api.state.result.draftSubmission.userImpression.visibilityRating === 4, 'visibility rating should update draft submission');
 assert(api.state.result.draftSubmission.userImpression.impressionTags.includes(impressionTagValue), 'impression tag should update draft submission');
 assert(api.state.result.draftSubmission.userImpression.primaryImpression === impressionTagValue, 'primary impression should update draft submission');
 assert(api.state.submissions.length === 0, 'self evaluation edits should not save completed submission before completion');
@@ -482,11 +530,13 @@ assert(api.state.submissions[0].taskId === 'uniform_visibility', 'completed subm
 assert(api.state.submissions[0].lightingState.lights.length === 3, 'completed submission should include serialized lighting state');
 assert(api.state.submissions[0].submissionImages.length === 5, 'completed submission should include five submission images');
 assert(api.state.submissions[0].userImpression.visibilityRating === 4, 'completed submission should include visibility rating');
+assert(api.state.submissions[0].userImpression.confidence === null, 'completed submission should keep confidence as null');
 assert(api.state.submissions[0].userImpression.impressionTags.includes(impressionTagValue), 'completed submission should include impression tags');
 assert(api.state.submissions[0].userImpression.primaryImpression === impressionTagValue, 'completed submission should include primary impression');
 const downloadedJson = api.downloadSubmissionJson();
 const downloadedSubmission = JSON.parse(downloadedJson);
 assert(downloadedSubmission.userImpression.visibilityRating === 4, 'downloaded completed submission should include user impression');
+assert(downloadedSubmission.userImpression.confidence === null, 'downloaded completed submission should keep confidence as null');
 window.location.pathname = '/admin';
 api.render();
 assert(app.querySelector('.admin-submission-row'), 'admin should show submission rows after authentication');
@@ -524,6 +574,19 @@ assert(arrayImport.ok === true && arrayImport.importedCount === 1 && api.loadSub
 api.clearAllSubmissionData();
 const wrappedImport = api.importSubmissionsJson(JSON.stringify({ submissions: JSON.parse(exportedAdminJson) }));
 assert(wrappedImport.ok === true && wrappedImport.importedCount === 1 && api.loadSubmissions().length === 1, 'wrapped submissions import should import submissions');
+const legacyConfidenceSubmission = {
+  ...JSON.parse(singleAdminJson),
+  submissionId: 'legacy-confidence-submission',
+  userImpression: {
+    ...JSON.parse(singleAdminJson).userImpression,
+    confidence: 4,
+  },
+};
+const legacyConfidenceImport = api.importSubmissionsJson(JSON.stringify(legacyConfidenceSubmission));
+assert(legacyConfidenceImport.ok === true && legacyConfidenceImport.importedCount === 1, 'legacy submissions with numeric confidence should import successfully');
+assert(api.getSubmissionById('legacy-confidence-submission').userImpression.confidence === 4, 'legacy confidence values should remain readable after import');
+api.clearAllSubmissionData();
+api.importSubmissionsJson(singleAdminJson);
 const replacement = { ...JSON.parse(singleAdminJson), participantId: 'replacement-participant' };
 const replaceImport = api.importSubmissionsJson(JSON.stringify(replacement));
 assert(replaceImport.ok === true && replaceImport.importedCount === 1, 'duplicate import should report the imported count');
@@ -627,7 +690,8 @@ assert(api.state.phase === 'feedback', 'submit should move to feedback phase');
 assert(app.querySelector('#retry'), 'retry should exist in feedback phase');
 assert(app.querySelector('#next-task'), 'next task should exist in feedback phase');
 assert(app.querySelector('.score-bars-panel'), 'score bars panel should exist in feedback phase');
-assert(app.querySelector('.feedback-screen').classList.contains('is-scrollable'), 'feedback screen should have scrollable class');
+assert(app.querySelector('.feedback-screen').classList.contains('scene-obscured'), 'feedback screen should obscure the realtime scene');
+assert(document.querySelector('#scene').style.visibility === 'hidden', 'realtime scene should be hidden during feedback');
 assertAllButtonsAreNonSubmit(app);
 
 const scoreText = app.innerHTML;
@@ -646,6 +710,7 @@ assert(api.state.feedbackPosition.x === 50 && api.state.feedbackPosition.y === 2
 
 app.querySelector('#retry').click();
 assert(api.state.phase === 'operation', 'retry should return to operation phase');
+assert(document.querySelector('#scene').style.visibility === 'visible', 'retry should restore the realtime scene');
 
 app.querySelector('#submit').click();
 const previousTask = api.state.taskId;
