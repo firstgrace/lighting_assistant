@@ -1695,29 +1695,31 @@ function renderUserImpressionForm(userImpression) {
   return `
     <section class="impression-form">
       <h2>\u3042\u306a\u305f\u306e\u898b\u3048\u65b9</h2>
-      <label class="form-row">
-        <span>\u3053\u306e\u7167\u660e\u306f\u898b\u3084\u3059\u3044\u3068\u601d\u3044\u307e\u3059\u304b\uff1f</span>
-        <select id="visibility-rating">
-          ${ratingOptions(impression.visibilityRating)}
-        </select>
-      </label>
-      <fieldset class="tag-fieldset">
-        <legend>\u7406\u7531</legend>
+      <fieldset class="visibility-rating-field">
+        <legend>\u3053\u306e\u7167\u660e\u306f\u898b\u3084\u3059\u3044\u3068\u611f\u3058\u307e\u3057\u305f\u304b\uff1f</legend>
+        <div class="visibility-rating-options" id="visibility-rating">
+          ${visibilityRatingOptions(impression.visibilityRating)}
+        </div>
+      </fieldset>
+      <fieldset class="tag-fieldset tag-section-reasons">
+        <legend>\u305d\u3046\u611f\u3058\u305f\u7406\u7531\u306b\u8fd1\u3044\u3082\u306e\u3092\u9078\u3093\u3067\u304f\u3060\u3055\u3044</legend>
+        <p class="tag-help">\u898b\u3048\u65b9\u306b\u3064\u3044\u3066\u3001\u5f53\u3066\u306f\u307e\u308b\u3082\u306e\u3092\u8907\u6570\u9078\u3079\u307e\u3059</p>
         <div class="tag-options">
           ${reasonTagOptions.map((tag) => `
             <label class="tag-check">
-              <input type="checkbox" name="reason-tags" value="${tag}" ${impression.reasonTags.includes(tag) ? 'checked' : ''} />
+              <input type="checkbox" name="reasonTags" value="${tag}" ${impression.reasonTags.includes(tag) ? 'checked' : ''} />
               <span>${tag}</span>
             </label>
           `).join('')}
         </div>
       </fieldset>
-      <fieldset class="tag-fieldset">
-        <legend>\u611f\u3058\u305f\u5370\u8c61</legend>
+      <fieldset class="tag-fieldset tag-section-impressions">
+        <legend>\u3053\u306e\u7167\u660e\u304b\u3089\u53d7\u3051\u305f\u5370\u8c61\u3092\u9078\u3093\u3067\u304f\u3060\u3055\u3044</legend>
+        <p class="tag-help">\u96f0\u56f2\u6c17\u3084\u611f\u3058\u65b9\u306b\u3064\u3044\u3066\u3001\u5f53\u3066\u306f\u307e\u308b\u3082\u306e\u3092\u8907\u6570\u9078\u3079\u307e\u3059</p>
         <div class="tag-options">
           ${impressionTagOptions.map((tag) => `
             <label class="tag-check">
-              <input type="checkbox" name="impression-tags" value="${tag}" ${impression.impressionTags.includes(tag) ? 'checked' : ''} />
+              <input type="checkbox" name="impressionTags" value="${tag}" ${impression.impressionTags.includes(tag) ? 'checked' : ''} />
               <span>${tag}</span>
             </label>
           `).join('')}
@@ -1787,27 +1789,50 @@ function ratingOptions(selected) {
   )).join('')}`;
 }
 
+function visibilityRatingOptions(selected) {
+  const labels = {
+    1: '\u3068\u3066\u3082\u898b\u306b\u304f\u3044',
+    2: '\u898b\u306b\u304f\u3044',
+    3: '\u3075\u3064\u3046',
+    4: '\u898b\u3084\u3059\u3044',
+    5: '\u3068\u3066\u3082\u898b\u3084\u3059\u3044',
+  };
+  return [1, 2, 3, 4, 5].map((value) => `
+    <label class="visibility-rating-option">
+      <input type="radio" name="visibilityRating" value="${value}" ${Number(selected) === value ? 'checked' : ''} />
+      <span class="rating-card">
+        <strong>${value}</strong>
+        <small>${labels[value]}</small>
+      </span>
+    </label>
+  `).join('');
+}
+
 function bindUserImpressionForm() {
   const form = app.querySelector('.impression-form');
   if (!form || !state.result) return;
   const sync = () => updateUserImpression(readUserImpressionFromForm());
-  app.querySelector('#visibility-rating')?.addEventListener('change', sync);
+  app.querySelectorAll('input[name="visibilityRating"]').forEach((input) => {
+    input.addEventListener('change', sync);
+  });
   app.querySelector('#impression-confidence')?.addEventListener('change', sync);
   app.querySelector('#impression-comment')?.addEventListener('input', sync);
   app.querySelector('#primary-impression')?.addEventListener('change', sync);
-  app.querySelectorAll('input[name="reason-tags"]').forEach((input) => {
+  app.querySelectorAll('input[name="reasonTags"]').forEach((input) => {
     input.addEventListener('change', sync);
   });
-  app.querySelectorAll('input[name="impression-tags"]').forEach((input) => {
+  app.querySelectorAll('input[name="impressionTags"]').forEach((input) => {
     input.addEventListener('change', sync);
   });
 }
 
 function readUserImpressionFromForm() {
-  const reasonInputs = Array.from(app.querySelectorAll('input[name="reason-tags"]'));
-  const impressionInputs = Array.from(app.querySelectorAll('input[name="impression-tags"]'));
+  const visibilityInputs = Array.from(app.querySelectorAll('input[name="visibilityRating"]'));
+  const reasonInputs = Array.from(app.querySelectorAll('input[name="reasonTags"]'));
+  const impressionInputs = Array.from(app.querySelectorAll('input[name="impressionTags"]'));
+  const selectedVisibility = visibilityInputs.find((input) => input.checked);
   return {
-    visibilityRating: nullableFormNumber(app.querySelector('#visibility-rating')?.value),
+    visibilityRating: nullableFormNumber(selectedVisibility?.value),
     reasonTags: reasonInputs
       .filter((input) => input.checked)
       .map((input) => input.value),
