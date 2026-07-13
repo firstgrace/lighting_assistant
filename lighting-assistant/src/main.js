@@ -11,6 +11,7 @@
 
 let THREE = null;
 let RectAreaLightUniformsLib = null;
+let sceneCanvas = null;
 let scene = createFallbackScene();
 const PASS_SCORE = 70;
 const BASIC_TRAINING_LIGHT_COLOR = '#fffaf0';
@@ -203,6 +204,9 @@ const mainTasks = [
 ];
 
 const tasks = [...tutorialTasks, ...mainTasks];
+// Tutorials remain available to existing flows, but normal research setup starts
+// from the five comparable foundation tasks.
+const setupTasks = mainTasks;
 
 const models = [
   { id: 'abstract', label: '\u5e7e\u4f55' },
@@ -220,6 +224,7 @@ const state = {
   phase: 'setup',
   taskId: 'tutorial_light_object',
   modelId: 'abstract',
+  setupSelections: { task: false, model: false },
   participantId: '',
   sessionId: '',
   submissions: [],
@@ -245,6 +250,8 @@ const state = {
   result: null,
 };
 
+let setupPreviewTaskId = null;
+
 const app = document.querySelector('#app');
 initializeParticipant();
 syncSubmissionsFromStore();
@@ -252,7 +259,8 @@ syncSubmissionsFromStore();
 class LightingScene {
   constructor() {
     RectAreaLightUniformsLib.init();
-    this.canvas = document.querySelector('#scene');
+    this.canvas = getSceneCanvas();
+    sceneCanvas = this.canvas;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x15161a);
     this.camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
@@ -263,6 +271,10 @@ class LightingScene {
     if (THREE.SRGBColorSpace) this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.NeutralToneMapping || THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1;
+    this.cameraTarget = new THREE.Vector3(0, 1.55, 0);
+    this.viewportObserver = null;
+    this.observedViewport = null;
+    this.lastViewportSize = { width: 0, height: 0 };
     this.lightObjects = [];
     this.markers = [];
     this.modelGroup = new THREE.Group();
@@ -275,8 +287,8 @@ class LightingScene {
     this.scene.add(this.surfaceSampleGroup);
     this.updateCamera(state.camera);
     this.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
-    this.resize();
-    window.addEventListener('resize', () => this.resize());
+    this.resizeLightingViewport();
+    window.addEventListener('resize', () => this.resizeLightingViewport());
     this.animate();
   }
 
@@ -303,6 +315,7 @@ class LightingScene {
     plinth.position.set(0, 0.19, 0);
     plinth.castShadow = true;
     plinth.receiveShadow = true;
+    this.plinth = plinth;
     this.scene.add(plinth);
 
     const grid = new THREE.GridHelper(20, 20, 0x8a8f9c, 0x3b3d43);
@@ -351,6 +364,7 @@ class LightingScene {
         item.receiveShadow = true;
       }
     });
+    this.fitCameraToObject();
   }
 
   buildLights() {
@@ -439,10 +453,11 @@ class LightingScene {
 
   updateCamera(cameraState) {
     const r = cameraState.radius;
+    const target = this.cameraTarget || new THREE.Vector3(0, 1.55, 0);
     if (cameraState.view === 'top') {
       this.camera.up.set(0, 0, -1);
-      this.camera.position.set(0, r + 1.55, 0);
-      this.camera.lookAt(0, 1.55, 0);
+      this.camera.position.set(target.x, target.y + r, target.z);
+      this.camera.lookAt(target);
       return;
     }
 
@@ -451,27 +466,22 @@ class LightingScene {
     const phi = degToRad(clamp(cameraState.phi, 6, 84));
     this.camera.position.set(
       Math.sin(theta) * Math.sin(phi) * r,
-      Math.cos(phi) * r + 1.4,
+      Math.cos(phi) * r + target.y,
       Math.cos(theta) * Math.sin(phi) * r,
     );
-    this.camera.lookAt(0, 1.55, 0);
+    this.camera.position.x += target.x;
+    this.camera.position.z += target.z;
+    this.camera.lookAt(target);
   }
 
   getCameraPose() {
-    const direction = new THREE.Vector3();
-    this.camera.getWorldDirection(direction);
-    const target = this.camera.position.clone().add(direction.multiplyScalar(Math.max(state.camera.radius, 1)));
     return {
       cameraPosition: finiteVector({
         x: this.camera.position.x,
         y: this.camera.position.y,
         z: this.camera.position.z,
       }),
-      cameraTarget: finiteVector({
-        x: target.x,
-        y: target.y,
-        z: target.z,
-      }),
+      cameraTarget: finiteVector(this.cameraTarget || { x: 0, y: 1.55, z: 0 }),
     };
   }
 
@@ -492,10 +502,52 @@ class LightingScene {
     };
   }
 
-  resize() {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+  getViewportSize() {
+    const viewport = this.observedViewport || document.querySelector('#preview-stage') || this.canvas?.parentElement;
+    const rect = viewport?.getBoundingClientRect?.();
+    const width = Math.round(rect?.width || viewport?.clientWidth || this.canvas?.clientWidth || 0);
+    const height = Math.round(rect?.height || viewport?.clientHeight || this.canvas?.clientHeight || 0);
+    return { width, height };
+  }
+
+  resizeLightingViewport() {
+    const { width, height } = this.getViewportSize();
+    if (width <= 0 || height <= 0) return false;
+    this.lastViewportSize = { width, height };
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setSize(width, height, false);
+    this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    return true;
+  }
+
+  observeViewport(viewport) {
+    if (!viewport || viewport === this.observedViewport) {
+      this.resizeLightingViewport();
+      return;
+    }
+    this.viewportObserver?.disconnect();
+    this.observedViewport = viewport;
+    if (typeof ResizeObserver !== 'undefined') {
+      this.viewportObserver = new ResizeObserver(() => this.resizeLightingViewport());
+      this.viewportObserver.observe(viewport);
+    }
+    this.resizeLightingViewport();
+  }
+
+  fitCameraToObject() {
+    if (!THREE || !this.modelGroup) return;
+    const bounds = new THREE.Box3().setFromObject(this.modelGroup);
+    if (this.plinth) bounds.expandByObject(this.plinth);
+    if (bounds.isEmpty()) return;
+    const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+    this.cameraTarget.copy(sphere.center);
+    const aspect = this.camera.aspect || 1;
+    const verticalFov = degToRad(this.camera.fov);
+    const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * aspect);
+    const limitingFov = Math.min(verticalFov, horizontalFov);
+    state.camera.radius = clamp((sphere.radius / Math.sin(limitingFov / 2)) * 1.3, 5, 15);
+    this.updateCamera(state.camera);
   }
 
   animate() {
@@ -544,7 +596,7 @@ function createFallbackScene() {
       const pose = viewConfig.viewId === 'user_view' ? deriveCameraPoseFromState(state.camera) : viewConfig;
       return {
         viewId: viewConfig.viewId,
-        dataUrl: safeCanvasDataUrl(document.querySelector('#scene')),
+        dataUrl: safeCanvasDataUrl(getSceneCanvas()),
         cameraPosition: finiteVector(pose.cameraPosition),
         cameraTarget: finiteVector(pose.cameraTarget),
       };
@@ -553,15 +605,15 @@ function createFallbackScene() {
 }
 
 function drawFallbackCanvas() {
-  const canvas = document.querySelector('#scene');
+  const canvas = getSceneCanvas();
   if (!canvas) return;
   const context = canvas.getContext('2d');
   if (!context) {
     canvas.style.background = '#15161a';
     return;
   }
-  const width = window.innerWidth;
-  const height = window.innerHeight;
+  const width = canvas.clientWidth || window.innerWidth;
+  const height = canvas.clientHeight || window.innerHeight;
   canvas.width = width * Math.min(window.devicePixelRatio || 1, 2);
   canvas.height = height * Math.min(window.devicePixelRatio || 1, 2);
   context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
@@ -598,58 +650,90 @@ function render() {
 }
 
 function renderSetup() {
-  setRealtimeSceneVisible(true);
+  // The setup screen is a quiet entry point. The live scene appears after starting.
+  setRealtimeSceneVisible(false);
+  const canStart = state.setupSelections.task && state.setupSelections.model;
+  const selectedSetupTask = setupTasks.find((task) => task.id === state.taskId) || null;
+  const initialDescription = selectedSetupTask
+    ? selectedSetupTask.description
+    : '\u304a\u984c\u3092\u9078\u3076\u3068\u3001\u3053\u3053\u306b\u8a73\u7d30\u304c\u8868\u793a\u3055\u308c\u307e\u3059\u3002';
+  const initialTitle = selectedSetupTask ? selectedSetupTask.label : '\u304a\u984c\u3092\u9078\u3093\u3067\u304f\u3060\u3055\u3044';
   app.innerHTML = `
-    <main class="screen setup-screen">
-      <section class="setup-card">
-        <div class="setup-main">
-          <h1 class="app-title">\u304a\u984c</h1>
-          <p class="app-subtitle">\u307e\u305a\u306f\u7df4\u7fd2\u3059\u308b\u7167\u660e\u306e\u76ee\u6a19\u3092\u9078\u3073\u307e\u3059\u3002\u57fa\u790e\u8ab2\u984c\u3067\u306f\u8272\u3067\u5370\u8c61\u3092\u4f5c\u3089\u305a\u3001\u914d\u7f6e\u30fb\u5411\u304d\u30fb\u30e9\u30a4\u30c8\u5f37\u5ea6\u3092\u5b66\u3073\u307e\u3059\u3002</p>
-          <div class="task-list">
-            ${tasks.map((task) => `
-              <button type="button" class="task-choice ${task.id === state.taskId ? 'is-selected' : ''}" data-task="${task.id}">
-                <span class="task-dot"></span>
-                <span class="task-badge">${task.scoreEnabled === false ? '\u30c1\u30e5\u30fc\u30c8\u30ea\u30a2\u30eb' : '\u672c\u8ab2\u984c'}</span>
+    <main class="screen setup-screen research-setup-screen">
+      <section class="setup-card research-setup-card">
+        <header class="setup-intro">
+          <p class="setup-kicker">LIGHTING STUDY</p>
+          <h1 class="app-title">\u7167\u660e\u5b66\u7fd2\u652f\u63f4\u30b7\u30b9\u30c6\u30e0</h1>
+          <p class="app-subtitle">\u304a\u984c\u3068\u4f5c\u54c1\u3092\u9078\u3073\u3001\u7167\u660e\u306b\u3088\u308b\u898b\u3048\u65b9\u306e\u9055\u3044\u3092\u78ba\u304b\u3081\u3066\u307f\u307e\u3057\u3087\u3046</p>
+        </header>
+        <div class="setup-flow">
+          <section class="setup-step setup-task-step" aria-labelledby="setup-task-title">
+            <header class="setup-step-heading">
+              <span class="setup-step-number">1</span>
+              <div><h2 id="setup-task-title">\u304a\u984c\u3092\u9078\u3076</h2><p>\u8a66\u3057\u305f\u3044\u898b\u3048\u65b9\u3092\u9078\u3073\u307e\u3059</p></div>
+            </header>
+            <div class="task-list setup-task-list">
+            ${setupTasks.map((task) => `
+              <button type="button" class="task-choice setup-task-choice ${state.setupSelections.task && task.id === state.taskId ? 'is-selected' : ''}" data-task="${task.id}" aria-pressed="${state.setupSelections.task && task.id === state.taskId}">
+                <span class="task-badge">\u57fa\u790e\u8ab2\u984c</span>
                 <span class="task-name">${task.label}</span>
-                <span class="task-detail">${task.description}<br><strong>\u4eca\u56de\u306e\u30dd\u30a4\u30f3\u30c8:</strong> ${task.learningPoints.join('\u30fb')}</span>
               </button>
             `).join('')}
-          </div>
+            </div>
+            <div class="setup-task-description" id="setup-task-description" aria-live="polite">
+              <p class="setup-description-label">\u304a\u984c\u306e\u8aac\u660e</p>
+              <h3>${initialTitle}</h3>
+              <p class="setup-description-text">${initialDescription}</p>
+            </div>
+          </section>
+          <section class="setup-step setup-model-step" aria-labelledby="setup-model-title">
+            <header class="setup-step-heading">
+              <span class="setup-step-number">2</span>
+              <div><h2 id="setup-model-title">\u4f5c\u54c1\u3092\u9078\u3076</h2><p>\u7167\u3089\u3059\u5bfe\u8c61\u3092\u9078\u3073\u307e\u3059</p></div>
+            </header>
+            <div class="model-grid setup-model-grid">
+              ${models.map((model) => `<button type="button" class="model-btn setup-model-choice ${state.setupSelections.model && state.modelId === model.id ? 'is-selected' : ''}" data-model="${model.id}" aria-pressed="${state.setupSelections.model && state.modelId === model.id}"><span class="model-preview model-preview--${model.id}" aria-hidden="true"></span><span>${model.label}</span></button>`).join('')}
+            </div>
+          </section>
+          <section class="setup-step setup-start-step" aria-labelledby="setup-start-title">
+            <header class="setup-step-heading">
+              <span class="setup-step-number">3</span>
+              <div><h2 id="setup-start-title">\u4f53\u9a13\u3092\u59cb\u3081\u308b</h2><p>${canStart ? '\u6e96\u5099\u304c\u3067\u304d\u307e\u3057\u305f\u3002\u7167\u660e\u306e\u64cd\u4f5c\u3092\u59cb\u3081\u3089\u308c\u307e\u3059\u3002' : '\u304a\u984c\u3068\u4f5c\u54c1\u3092\u9078\u3076\u3068\u3001\u4f53\u9a13\u3092\u59cb\u3081\u3089\u308c\u307e\u3059\u3002'}</p></div>
+            </header>
+            <button type="button" class="primary-btn setup-start-button" id="start" ${canStart ? '' : 'disabled'}>\u4f53\u9a13\u3092\u59cb\u3081\u308b</button>
+          </section>
         </div>
-        <aside class="setup-side">
-          <div class="setting-panel">
-            <h2 class="panel-title">\u652f\u63f4\u8a2d\u5b9a</h2>
-            <label class="participant-row">
-              <span>participantId</span>
-              <input id="participant-id" type="text" value="${state.participantId}" placeholder="anonymous" autocomplete="off" />
-            </label>
+        <details class="setup-details">
+          <summary>\u8a73\u7d30\u8a2d\u5b9a</summary>
+          <div class="setup-details-content">
+            <label class="participant-row"><span>participantId</span><input id="participant-id" type="text" value="${state.participantId}" placeholder="anonymous" autocomplete="off" /></label>
             ${switchRow('hint-toggle', '\u30d2\u30f3\u30c8', state.assist.hint)}
             ${switchRow('feedback-toggle', '\u30d5\u30a3\u30fc\u30c9\u30d0\u30c3\u30af', state.assist.feedback)}
           </div>
-          <div class="upload-panel">
-            <h2 class="panel-title">\u88ab\u5199\u4f53\u306e3D\u30e2\u30c7\u30eb</h2>
-            <p class="muted">\u5b9f\u9a13\u7528\u306e\u7c21\u6613\u30e2\u30c7\u30eb\u3092\u5207\u308a\u66ff\u3048\u307e\u3059\u3002GLB\u30a2\u30c3\u30d7\u30ed\u30fc\u30c9\u306f\u6b21\u306e\u5b9f\u88c5\u30b9\u30c6\u30c3\u30d7\u3067\u63a5\u7d9a\u3067\u304d\u308b\u69cb\u6210\u3067\u3059\u3002</p>
-            <div class="model-grid">
-              ${models.map((model) => `<button type="button" class="model-btn ${state.modelId === model.id ? 'is-selected' : ''}" data-model="${model.id}">${model.label}</button>`).join('')}
-            </div>
-          </div>
-          <div class="setup-actions">
-            <button type="button" class="primary-btn" id="start">\u30b9\u30bf\u30fc\u30c8</button>
-          </div>
-        </aside>
+        </details>
       </section>
     </main>
   `;
 
   app.querySelectorAll('.task-choice').forEach((button) => {
+    const task = setupTasks.find((candidate) => candidate.id === button.dataset.task);
+    const showPreview = () => updateSetupTaskDescription(task?.id);
+    const restoreSelected = () => updateSetupTaskDescription(state.setupSelections.task ? state.taskId : null);
+    button.addEventListener('mouseenter', showPreview);
+    button.addEventListener('focus', showPreview);
+    button.addEventListener('mouseleave', restoreSelected);
+    button.addEventListener('blur', restoreSelected);
     button.addEventListener('click', () => {
       state.taskId = normalizeTaskId(button.dataset.task);
+      state.setupSelections.task = true;
+      setupPreviewTaskId = state.taskId;
       renderSetup();
     });
   });
   app.querySelectorAll('.model-btn').forEach((button) => {
     button.addEventListener('click', () => {
       state.modelId = button.dataset.model;
+      state.setupSelections.model = true;
       updateDerivedIlluminance();
       scene.setModel(state.modelId);
       scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
@@ -666,6 +750,22 @@ function renderSetup() {
     state.participantId = event.target.value.trim();
   });
   app.querySelector('#start').addEventListener('click', startTask);
+}
+
+function updateSetupTaskDescription(taskId) {
+  const description = document.querySelector('#setup-task-description');
+  if (!description) return;
+  const task = setupTasks.find((candidate) => candidate.id === taskId);
+  if (!task) {
+    setupPreviewTaskId = null;
+    const selectedTask = setupTasks.find((candidate) => candidate.id === state.taskId);
+    description.querySelector('h3').textContent = selectedTask?.label || '\u304a\u984c\u3092\u9078\u3093\u3067\u304f\u3060\u3055\u3044';
+    description.querySelector('.setup-description-text').textContent = selectedTask?.description || '\u304a\u984c\u3092\u9078\u3076\u3068\u3001\u3053\u3053\u306b\u8a73\u7d30\u304c\u8868\u793a\u3055\u308c\u307e\u3059\u3002';
+    return;
+  }
+  setupPreviewTaskId = task.id;
+  description.querySelector('h3').textContent = task.label;
+  description.querySelector('.setup-description-text').textContent = task.description;
 }
 
 function renderOperation() {
@@ -697,7 +797,10 @@ function renderOperation() {
             <h2>\u30d7\u30ec\u30d3\u30e5\u30fc</h2>
             <span class="muted">\u30c9\u30e9\u30c3\u30b0\u3067\u8996\u70b9\u56de\u8ee2</span>
           </div>
-          <div class="preview-stage" id="preview-stage">
+          <div class="preview-canvas-window" id="preview-stage">
+            <div class="scene-host" id="scene-host"></div>
+          </div>
+          <footer class="preview-tools" aria-label="\u30d7\u30ec\u30d3\u30e5\u30fc\u64cd\u4f5c">
             <div class="view-controls">
               ${viewButton('front', '\u6b63\u9762')}
               ${viewButton('side', '\u5074\u9762')}
@@ -707,15 +810,27 @@ function renderOperation() {
               <span>\u9060\u8fd1</span>
               <input id="zoom" type="range" min="5" max="15" step="0.1" value="${state.camera.radius}" />
             </label>
-          </div>
+            <label class="preview-toggle">
+              <input id="helper-visible" type="checkbox" ${light.showHelper === false ? '' : 'checked'} />
+              <span>\u30ac\u30a4\u30c9</span>
+            </label>
+            <label class="preview-toggle">
+              <input id="surface-samples-visible" type="checkbox" ${state.showSurfaceSamples ? 'checked' : ''} />
+              <span>\u6e2c\u5b9a\u70b9</span>
+            </label>
+          </footer>
         </div>
         <aside class="work-card">
           <div class="editor-head">
-            <h2>\u64cd\u4f5c\u30a6\u30a3\u30f3\u30c9\u30a6</h2>
-            <div class="light-tabs">
-              ${state.lights.map((_, index) => `<button type="button" class="tab-btn ${index === state.activeLight ? 'is-selected' : ''}" data-light-index="${index}">${index + 1}</button>`).join('')}
-            </div>
+            <h2>\u7167\u660e\u3092\u8abf\u6574</h2>
           </div>
+          <section class="control-section control-section--selection" aria-labelledby="light-selection-title">
+            <div class="control-section-heading">
+              <h3 id="light-selection-title">A. \u30e9\u30a4\u30c8\u9078\u629e</h3>
+              <div class="light-tabs">
+                ${state.lights.map((_, index) => `<button type="button" class="tab-btn ${index === state.activeLight ? 'is-selected' : ''}" data-light-index="${index}">${index + 1}</button>`).join('')}
+              </div>
+            </div>
           <div class="type-tabs">
             <button type="button" class="type-btn ${light.kind === 'spot' ? 'is-selected' : ''}" data-kind="spot">\u30b9\u30dd\u30c3\u30c8</button>
             <button type="button" class="type-btn ${light.kind === 'area' ? 'is-selected' : ''}" data-kind="area">\u30a8\u30ea\u30a2</button>
@@ -725,47 +840,62 @@ function renderOperation() {
               <input id="light-enabled" type="checkbox" ${light.enabled === false ? '' : 'checked'} />
               <span>\u30e9\u30a4\u30c8\u3092\u70b9\u706f</span>
             </label>
-            <label class="check-row">
-              <input id="helper-visible" type="checkbox" ${light.showHelper === false ? '' : 'checked'} />
-              <span>\u64cd\u4f5c\u30ac\u30a4\u30c9\u3092\u8868\u793a</span>
-            </label>
-            <label class="check-row">
-              <input id="surface-samples-visible" type="checkbox" ${state.showSurfaceSamples ? 'checked' : ''} />
-              <span>\u8868\u9762\u6e2c\u5b9a\u70b9\u3092\u8868\u793a</span>
-            </label>
             <button type="button" class="tool-btn" id="reset-lights">\u521d\u671f\u72b6\u614b\u306b\u623b\u3059</button>
           </div>
+          </section>
+          <section class="control-section control-section--position" aria-labelledby="light-position-title">
+            <div class="control-section-heading">
+              <h3 id="light-position-title">B. \u30e9\u30a4\u30c8\u4f4d\u7f6e</h3>
+            </div>
+            <p class="control-section-help">\u4e0a\u9762\u56f3\u3067\u5927\u307e\u304b\u306b\u52d5\u304b\u3057\u3001\u30b9\u30e9\u30a4\u30c0\u30fc\u3067\u7d30\u304b\u304f\u8abf\u6574\u3067\u304d\u307e\u3059</p>
           <div class="map-and-values">
             ${topMap()}
             <div class="slider-list">
-              ${slider('x', 'x', -10, 10, 0.1)}
-              ${slider('y', 'y', -10, 10, 0.1)}
-              ${slider('z', 'z', -2, 10, 0.1)}
-              ${slider('intensity', '\u30e9\u30a4\u30c8\u5f37\u5ea6', 0, 1000, 10)}
-              ${light.kind === 'spot' ? slider('spread', '\u62e1\u6563\u7387', 0.08, 0.9, 0.01) : ''}
-              ${light.kind === 'area' ? slider('width', '\u6a2a\u5e45', 0.5, 8, 0.1) + slider('height', '\u7e26\u5e45', 0.5, 8, 0.1) : ''}
-              ${slider('elevation', '\u4ef0\u4fef\u89d2', -80, 80, 1)}
-              ${slider('azimuth', '\u65b9\u4f4d\u89d2', -180, 180, 1)}
+              ${slider('x', '\u5de6\u53f3\u306e\u4f4d\u7f6e', -10, 10, 0.1)}
+              ${slider('y', '\u524d\u5f8c\u306e\u4f4d\u7f6e', -10, 10, 0.1)}
+              ${slider('z', '\u9ad8\u3055', -2, 10, 0.1)}
             </div>
           </div>
-          ${allowLightColorEditing ? `
+          </section>
+          <section class="control-section control-section--properties" aria-labelledby="light-properties-title">
+            <div class="control-section-heading">
+              <h3 id="light-properties-title">C. \u5149\u306e\u6027\u8cea</h3>
+            </div>
+            <div class="slider-list">
+              ${slider('intensity', '\u660e\u308b\u3055', 0, 1000, 10)}
+              ${light.kind === 'spot' ? slider('spread', '\u5149\u306e\u5e83\u304c\u308a', 0.08, 0.9, 0.01) : ''}
+              ${light.kind === 'area' ? slider('width', '\u5149\u306e\u6a2a\u5e45', 0.5, 8, 0.1) + slider('height', '\u5149\u306e\u7e26\u5e45', 0.5, 8, 0.1) : ''}
+            </div>
+            ${allowLightColorEditing ? `
             <label class="color-row">
-              <span>\u30e9\u30a4\u30c8\u8272</span>
+              <span>\u8272\u6e29\u5ea6</span>
               <input type="color" id="color" value="${light.color}" />
             </label>
           ` : `
             <div class="color-row is-locked">
-              <span>\u30e9\u30a4\u30c8\u8272</span>
+              <span>\u8272\u6e29\u5ea6</span>
               <strong>\u57fa\u790e\u8ab2\u984c\u3067\u306f${BASIC_TRAINING_LIGHT_COLOR_LABEL}\u306b\u56fa\u5b9a</strong>
             </div>
           `}
-          <div class="submit-wrap">
-            <button type="button" class="primary-btn" id="submit">\u7167\u660e\u3092\u78ba\u5b9a\u3057\u3066\u8a55\u4fa1\u3078\u9032\u3080</button>
-          </div>
+          </section>
+          <section class="control-section control-section--direction" aria-labelledby="light-direction-title">
+            <div class="control-section-heading"><h3 id="light-direction-title">D. \u5149\u306e\u5411\u304d</h3></div>
+            <div class="slider-list">
+              ${slider('elevation', '\u4e0a\u4e0b\u65b9\u5411', -80, 80, 1)}
+              ${slider('azimuth', '\u5de6\u53f3\u65b9\u5411', -180, 180, 1)}
+            </div>
+          </section>
+          <section class="control-section control-section--submit" aria-labelledby="light-submit-title">
+            <div class="control-section-heading"><h3 id="light-submit-title">E. \u7167\u660e\u3092\u78ba\u5b9a\u3057\u3066\u8a55\u4fa1\u3078\u9032\u3080</h3></div>
+            <div class="submit-wrap">
+              <button type="button" class="primary-btn" id="submit">\u7167\u660e\u3092\u78ba\u5b9a\u3057\u3066\u8a55\u4fa1\u3078\u9032\u3080</button>
+            </div>
+          </section>
         </aside>
       </section>
     </main>
   `;
+  mountSceneCanvas();
   bindOperation();
 }
 
@@ -830,10 +960,33 @@ function renderFeedback() {
 }
 
 function setRealtimeSceneVisible(visible) {
-  const canvas = document.querySelector('#scene');
+  const canvas = getSceneCanvas();
   if (!canvas?.style) return;
   canvas.style.visibility = visible ? 'visible' : 'hidden';
   canvas.style.pointerEvents = visible ? 'auto' : 'none';
+}
+
+function getSceneCanvas() {
+  return sceneCanvas || document.querySelector('#scene');
+}
+
+function mountSceneCanvas() {
+  const host = app.querySelector('#scene-host');
+  const canvas = getSceneCanvas();
+  if (!host || !canvas) return;
+  sceneCanvas = canvas;
+  if (canvas.parentElement !== host && typeof host.appendChild === 'function') {
+    host.appendChild(canvas);
+  }
+  canvas.style.visibility = 'visible';
+  canvas.style.pointerEvents = 'auto';
+  const resizeScene = () => {
+    if (typeof scene.observeViewport === 'function') scene.observeViewport(host);
+    else if (typeof scene.resizeLightingViewport === 'function') scene.resizeLightingViewport();
+    else drawFallbackCanvas();
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(resizeScene);
+  else resizeScene();
 }
 
 function renderAdminView() {
@@ -1260,18 +1413,24 @@ function slider(param, label, min, max, step) {
 }
 
 function topMap() {
+  return `
+    <svg class="top-map" id="top-map" viewBox="0 0 160 160" role="img" aria-label="top view">
+      ${topMapContents()}
+    </svg>
+  `;
+}
+
+function topMapContents() {
   const active = state.lights[state.activeLight];
   const shapes = state.lights.map((light, index) => mapShape(light, index === state.activeLight)).join('');
   return `
-    <svg class="top-map" id="top-map" viewBox="0 0 160 160" role="img" aria-label="top view">
-      <rect x="0" y="0" width="160" height="160" fill="#24262b"></rect>
-      <line x1="80" y1="8" x2="80" y2="152" stroke="#3f424b"></line>
-      <line x1="8" y1="80" x2="152" y2="80" stroke="#3f424b"></line>
-      <polygon points="80,102 72,90 88,90" fill="#f8fafc"></polygon>
-      <text x="80" y="86" fill="#f8fafc" text-anchor="middle" font-size="18">*</text>
-      ${shapes}
-      <circle cx="${mapX(active.x)}" cy="${mapY(active.y)}" r="8" fill="transparent" stroke="#ecff72" stroke-width="2"></circle>
-    </svg>
+    <rect x="0" y="0" width="160" height="160" fill="#24262b"></rect>
+    <line x1="80" y1="8" x2="80" y2="152" stroke="#3f424b"></line>
+    <line x1="8" y1="80" x2="152" y2="80" stroke="#3f424b"></line>
+    <polygon points="80,102 72,90 88,90" fill="#f8fafc"></polygon>
+    <text x="80" y="86" fill="#f8fafc" text-anchor="middle" font-size="18">*</text>
+    ${shapes}
+    <circle cx="${mapX(active.x)}" cy="${mapY(active.y)}" r="8" fill="transparent" stroke="#ecff72" stroke-width="2"></circle>
   `;
 }
 
@@ -1333,16 +1492,21 @@ function bindOperation() {
   app.querySelector('#reset-lights').addEventListener('click', resetLights);
   app.querySelectorAll('input[type="range"][data-param]').forEach((input) => {
     input.addEventListener('input', (event) => {
-      updateLight(event.target.dataset.param, Number(event.target.value));
-      renderOperation();
+      const param = event.target.dataset.param;
+      updateLightLive(param, Number(event.target.value));
+    });
+    input.addEventListener('change', (event) => {
+      const param = event.target.dataset.param;
+      updateLightLive(param, Number(event.target.value));
+      logChange(param, state.lights[state.activeLight][param]);
     });
   });
   app.querySelectorAll('input[type="number"][data-param]').forEach((input) => {
     input.addEventListener('change', (event) => {
       const param = event.target.dataset.param;
       const value = clamp(Number(event.target.value), Number(event.target.min), Number(event.target.max));
-      updateLight(param, value);
-      renderOperation();
+      updateLightLive(param, value);
+      logChange(param, state.lights[state.activeLight][param]);
     });
   });
   const colorInput = app.querySelector('#color');
@@ -1397,15 +1561,23 @@ function bindPreviewDrag() {
 
 function bindMapDrag() {
   const map = app.querySelector('#top-map');
+  if (!map) return;
+  let dragging = false;
+  let pointerId = null;
+  let positionChanged = false;
   const setPosition = (event) => {
     const rect = map.getBoundingClientRect();
     const x = ((event.clientX - rect.left) / rect.width) * 160;
     const y = ((event.clientY - rect.top) / rect.height) * 160;
-    updateLight('x', clamp((x - 80) / 7, -10, 10));
-    updateLight('y', clamp((y - 80) / 7, -10, 10));
-    renderOperation();
+    updateLightLive('x', clamp((x - 80) / 7, -10, 10));
+    updateLightLive('y', clamp((y - 80) / 7, -10, 10));
+    positionChanged = true;
   };
   map.addEventListener('pointerdown', (event) => {
+    event.preventDefault?.();
+    dragging = true;
+    pointerId = event.pointerId;
+    positionChanged = false;
     try {
       if (event.pointerId !== undefined && map.setPointerCapture) {
         map.setPointerCapture(event.pointerId);
@@ -1414,11 +1586,27 @@ function bindMapDrag() {
       // Synthetic pointer events in tests may not have a capturable pointer.
     }
     setPosition(event);
-    map.onpointermove = setPosition;
   });
-  map.addEventListener('pointerup', () => {
-    map.onpointermove = null;
+  map.addEventListener('pointermove', (event) => {
+    if (!dragging || (pointerId !== null && event.pointerId !== pointerId)) return;
+    setPosition(event);
   });
+  const finishDrag = (event) => {
+    if (!dragging || (pointerId !== null && event?.pointerId !== pointerId)) return;
+    dragging = false;
+    if (positionChanged) {
+      logChange('x', state.lights[state.activeLight].x);
+      logChange('y', state.lights[state.activeLight].y);
+    }
+    try {
+      if (pointerId !== null && map.releasePointerCapture) map.releasePointerCapture(pointerId);
+    } catch {
+      // A pointer can already have been released by the browser.
+    }
+    pointerId = null;
+  };
+  map.addEventListener('pointerup', finishDrag);
+  map.addEventListener('pointercancel', finishDrag);
 }
 
 function startTask() {
@@ -1553,16 +1741,36 @@ function applyFeedbackPosition() {
   card.style.transform = `translate(${state.feedbackPosition.x}px, ${state.feedbackPosition.y}px)`;
 }
 
-function updateLight(param, value) {
+function updateLight(param, value, options = {}) {
+  const { record = true } = options;
   if (param === 'color' && !allowLightColorEditing) return;
   state.lights[state.activeLight][param] = value;
   if (trainingMode === 'basic') {
     state.lights[state.activeLight].color = BASIC_TRAINING_LIGHT_COLOR;
   }
-  logChange(param, value);
+  if (record) logChange(param, value);
   updateDerivedIlluminance();
   scene.updateLights(state.lights);
   scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
+}
+
+function updateLightLive(param, value) {
+  updateLight(param, value, { record: false });
+  syncOperationLightControls(param);
+  refreshTopMap();
+}
+
+function syncOperationLightControls(param) {
+  const light = state.lights[state.activeLight];
+  const inputs = Array.from(app.querySelectorAll(`[data-param="${param}"]`));
+  inputs.forEach((input) => {
+    input.value = input.type === 'number' ? format(light[param]) : light[param];
+  });
+}
+
+function refreshTopMap() {
+  const map = app.querySelector('#top-map');
+  if (map) map.innerHTML = topMapContents();
 }
 
 function logChange(param, value) {

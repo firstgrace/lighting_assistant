@@ -369,10 +369,19 @@ assert(!app.querySelector('.admin-submission-row'), 'admin should show no rows w
 window.location.pathname = '/';
 api.render();
 assert(app.querySelector('#start'), 'study route should still render setup after leaving admin');
-assert(app.querySelectorAll('.task-choice').length === 7, 'tutorials plus five task choices should exist');
+assert(app.querySelectorAll('.task-choice').length === 5, 'setup should show only the five foundation task choices');
+assert(!app.innerHTML.includes('tutorial_light_object') && !app.innerHTML.includes('tutorial_reduce_light'), 'setup should not expose tutorial task choices');
+assert(!app.querySelectorAll('.setup-task-detail').length, 'task cards should not expand with inline descriptions');
+assert(app.querySelector('#setup-task-description'), 'setup should provide one shared task description area');
+assert(app.querySelector('.research-setup-card'), 'setup should use the participant-focused research layout');
+assert(app.querySelector('.setup-details'), 'participant and support settings should be grouped in details');
+assert(!app.querySelector('.setup-details').attrs.open, 'detailed settings should be collapsed initially');
+assert(app.querySelector('#start').attrs.disabled !== undefined, 'start should wait for a task and model choice');
+assert(document.querySelector('#scene').style.visibility === 'hidden', 'setup should hide the live 3D canvas');
 assertAllButtonsAreNonSubmit(app);
 
 app.querySelectorAll('.task-choice').find((button) => button.dataset.task === 'uniform_visibility').click();
+app.querySelectorAll('.model-btn')[0].click();
 input(app.querySelector('#participant-id'), '');
 app.querySelector('#start').click();
 assert(api.state.participantId.startsWith('anonymous-'), 'empty participant id should generate anonymous id on start');
@@ -633,6 +642,12 @@ assert(api.state.assist.feedback === true, 'feedback toggle should update state'
 app.querySelector('#start').click();
 assert(api.state.phase === 'operation', 'start should move to operation phase');
 assert(app.querySelector('#submit'), 'submit button should exist in operation phase');
+assert(app.querySelector('.preview-canvas-window') && app.querySelector('#scene-host'), 'operation should render the realtime scene inside a dedicated preview window');
+assert(app.querySelector('.preview-tools'), 'preview should provide a bottom toolbar for view and display tools');
+assert(document.querySelector('#scene').style.visibility === 'visible', 'realtime canvas should be visible in the operation preview window');
+assert(app.innerHTML.includes('A. \u30e9\u30a4\u30c8\u9078\u629e') && app.innerHTML.includes('B. \u30e9\u30a4\u30c8\u4f4d\u7f6e') && app.innerHTML.includes('C. \u5149\u306e\u6027\u8cea') && app.innerHTML.includes('D. \u5149\u306e\u5411\u304d') && app.innerHTML.includes('E. \u7167\u660e\u3092\u78ba\u5b9a\u3057\u3066\u8a55\u4fa1\u3078\u9032\u3080'), 'operation panel should use five guided control sections');
+assert(app.innerHTML.includes('\u4e0a\u9762\u56f3\u3067\u5927\u307e\u304b\u306b\u52d5\u304b\u3057'), 'position section should explain map and slider roles');
+assert(app.innerHTML.includes('\u5de6\u53f3\u306e\u4f4d\u7f6e') && app.innerHTML.includes('\u524d\u5f8c\u306e\u4f4d\u7f6e') && app.innerHTML.includes('\u9ad8\u3055'), 'position controls should use participant-facing labels');
 assert(app.querySelectorAll('.tab-btn').length === 3, 'three light tabs should exist');
 assert(app.querySelector('#top-map'), 'top map should exist');
 assert(app.querySelector('#light-enabled'), 'light on/off control should exist');
@@ -664,8 +679,21 @@ assert(api.state.sessionStats.resetCount === 1, 'reset should increment reset co
 app.querySelectorAll('.tab-btn')[1].click();
 
 const xSlider = app.querySelectorAll('input[type="range"][data-param]').find((slider) => slider.dataset.param === 'x');
+const operationDomBeforeSliderDrag = app.innerHTML;
 input(xSlider, 6);
 assert(api.state.lights[1].x === 6, 'x slider should update active light x');
+assert(app.querySelectorAll('input[type="range"][data-param]').find((slider) => slider.dataset.param === 'x') === xSlider, 'slider input should not be replaced while dragging');
+assert(app.innerHTML === operationDomBeforeSliderDrag, 'slider input should not rerender the operation panel');
+
+const liveSliderValues = { y: -2.7, z: 4.2, intensity: 280, elevation: -20, azimuth: 65 };
+const workCardBeforeLiveUpdates = app.querySelector('.work-card');
+Object.entries(liveSliderValues).forEach(([param, value]) => {
+  const sliderInput = app.querySelectorAll('input[type="range"][data-param]').find((slider) => slider.dataset.param === param);
+  assert(sliderInput, `${param} slider should exist for live drag testing`);
+  input(sliderInput, value);
+  assert(api.state.lights[1][param] === value, `${param} slider should update the active light during input`);
+  assert(app.querySelector('.work-card') === workCardBeforeLiveUpdates, `${param} input should not replace the operation panel`);
+});
 
 const yNumber = app.querySelectorAll('input[type="number"][data-param]').find((inputElement) => inputElement.dataset.param === 'y');
 changeValue(yNumber, -3.5);
@@ -683,7 +711,30 @@ assert(api.state.camera.view === 'top' && api.state.camera.phi === 0, 'top view 
 
 const map = app.querySelector('#top-map');
 map.dispatchEvent({ type: 'pointerdown', target: map, clientX: 120, clientY: 40, pointerId: 2 });
+map.dispatchEvent({ type: 'pointermove', target: map, clientX: 135, clientY: 55, pointerId: 2 });
+map.dispatchEvent({ type: 'pointerup', target: map, clientX: 135, clientY: 55, pointerId: 2 });
 assert(api.state.lights[1].x > 0 && api.state.lights[1].y < 0, 'top map pointer should match top preview x/y direction');
+assert(app.querySelector('#top-map') === map, 'top map should remain mounted while it is dragged');
+const syncedXSlider = app.querySelectorAll('input[type="range"][data-param]').find((slider) => slider.dataset.param === 'x');
+const syncedYSlider = app.querySelectorAll('input[type="range"][data-param]').find((slider) => slider.dataset.param === 'y');
+assert(Number(syncedXSlider.value) === api.state.lights[1].x && Number(syncedYSlider.value) === api.state.lights[1].y, 'top map drag should synchronize x/y sliders');
+
+const areaWorkCard = app.querySelector('.work-card');
+[['width', 5.4], ['height', 3.6]].forEach(([param, value]) => {
+  const sliderInput = app.querySelectorAll('input[type="range"][data-param]').find((slider) => slider.dataset.param === param);
+  assert(sliderInput, `${param} slider should exist when the active light is an area light`);
+  input(sliderInput, value);
+  assert(api.state.lights[1][param] === value, `${param} slider should update the area light during input`);
+  assert(app.querySelector('.work-card') === areaWorkCard, `${param} input should not replace the operation panel`);
+});
+
+app.querySelectorAll('.type-btn').find((button) => button.dataset.kind === 'spot').click();
+const spotWorkCard = app.querySelector('.work-card');
+const spreadSlider = app.querySelectorAll('input[type="range"][data-param]').find((slider) => slider.dataset.param === 'spread');
+assert(spreadSlider, 'spread slider should exist after switching the active light to a spot');
+input(spreadSlider, 0.52);
+assert(api.state.lights[1].spread === 0.52, 'spread slider should update the spot light during input');
+assert(app.querySelector('.work-card') === spotWorkCard, 'spread input should not replace the operation panel');
 
 app.querySelector('#submit').click();
 assert(api.state.phase === 'feedback', 'submit should move to feedback phase');
