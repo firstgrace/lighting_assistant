@@ -308,7 +308,7 @@ const singleZeroOutlierSummary = api.summarizeIlluminanceSamples([
 assert(singleZeroOutlierSummary.percentile10Illuminance > 0, 'a single zero sample should not force p10 illuminance to zero');
 assert(singleZeroOutlierSummary.uniformity > 0, 'a single zero sample should not force uniformity to zero');
 
-const allOffSamples = api.generateSurfaceMeasurementPoints('abstract').map((sample) => ({
+const allOffSamples = api.generateSurfaceMeasurementPoints('dav').map((sample) => ({
   ...sample,
   illuminance: api.calculateDirectIlluminanceAtSample(sample, api.state.lights.map((light) => ({ ...light, enabled: false }))),
 }));
@@ -370,6 +370,15 @@ window.location.pathname = '/';
 api.render();
 assert(app.querySelector('#start'), 'study route should still render setup after leaving admin');
 assert(app.querySelectorAll('.task-choice').length === 5, 'setup should show only the five foundation task choices');
+assert(app.querySelectorAll('.model-btn').length === 3, 'setup should show the three GLB subject models');
+assert(api.modelDefinitions.map((model) => model.id).join(',') === 'dav,pottery,kuma', 'model definitions should use the three stable GLB ids');
+assert(api.modelDefinitions.every((model) => model.url.startsWith('/models/') && model.url.endsWith('.glb')), 'every subject definition should point to a public GLB');
+assert(api.modelDefinitions.every((model) => model.rotation.x === Math.PI / 2), 'Z-up GLB models should use the verified positive 90 degree X-axis conversion');
+assert(api.modelDefinitions.every((model) => model.cameraYawOffset === 0 && model.cameraPitch === 58), 'model definitions should support a shared front camera configuration');
+assert(api.modelDefinitions.find((model) => model.id === 'dav').verticalOffset === 0, 'bust vertical offset should remain zero');
+assert(api.modelDefinitions.find((model) => model.id === 'pottery').verticalOffset === 0, 'pottery vertical offset should remain zero');
+assert(api.modelDefinitions.find((model) => model.id === 'kuma').verticalOffset < 0, 'kuma should apply a downward provisional grounding correction');
+assert(app.innerHTML.includes('石膏胸像') && app.innerHTML.includes('陶器') && app.innerHTML.includes('木彫り熊'), 'setup should show all three subject labels');
 assert(!app.innerHTML.includes('tutorial_light_object') && !app.innerHTML.includes('tutorial_reduce_light'), 'setup should not expose tutorial task choices');
 assert(!app.querySelectorAll('.setup-task-detail').length, 'task cards should not expand with inline descriptions');
 assert(app.querySelector('#setup-task-description'), 'setup should provide one shared task description area');
@@ -386,6 +395,9 @@ input(app.querySelector('#participant-id'), '');
 app.querySelector('#start').click();
 assert(api.state.participantId.startsWith('anonymous-'), 'empty participant id should generate anonymous id on start');
 assert(api.state.sessionId.startsWith('session-'), 'session id should be generated on start');
+assert(api.state.camera.theta === 0 && api.state.camera.phi === 58, 'initial camera state should use the front view');
+assert(api.state.lights[1].kind === 'area' && api.state.lights[1].width === 0.5 && api.state.lights[1].height === 0.5, 'area fill light should begin at 0.5 by 0.5');
+assert(api.state.lights[2].enabled === true, 'upper-back accent light should be enabled in the initial lighting state');
 assert(app.querySelector('#surface-samples-visible'), 'surface sample debug toggle should exist');
 assert(app.querySelector('#surface-samples-visible').checked === false, 'surface sample debug toggle should be off by default');
 change(app.querySelector('#surface-samples-visible'), true);
@@ -412,6 +424,9 @@ assert(api.state.persistenceMessage === '', 'lighting confirmation should not sh
 assert(api.state.result.draftSubmission.participantId === api.state.participantId, 'draft submission should include participant id');
 assert(api.state.result.draftSubmission.sessionId === api.state.sessionId, 'draft submission should include session id');
 assert(api.state.result.draftSubmission.lightingState.lights.length === 3, 'draft submission should include serialized lighting state');
+assert(api.state.result.draftSubmission.subjectModel.modelId === 'dav', 'draft submission should include the selected subject model id');
+assert(api.state.result.draftSubmission.subjectModel.modelLabel === '石膏胸像', 'draft submission should include the selected subject label');
+assert(api.state.result.draftSubmission.subjectModel.materialMode === 'study_white', 'draft submission should include the subject material mode');
 assert(api.state.result.draftSubmission.systemDiagnostics.evaluationSource === 'direct_illuminance', 'draft submission should include system diagnostics');
 assert(api.state.result.draftSubmission.analysisFlags.hasMultipleViews === true, 'draft submission should include analysis flags');
 const expectedViewIds = ['user_view', 'front', 'left_45', 'right_45', 'upper_front'];
@@ -632,7 +647,7 @@ app.querySelectorAll('.task-choice').find((button) => button.dataset.task === 's
 assert(api.state.taskId === 'shape_emphasis', 'task card click should select shape emphasis');
 
 app.querySelectorAll('.model-btn')[2].click();
-assert(api.state.modelId === 'figure', 'model button should switch subject model');
+assert(api.state.modelId === 'kuma', 'model button should switch subject model');
 
 change(app.querySelector('#hint-toggle'), false);
 assert(api.state.assist.hint === false, 'hint toggle should update state');
@@ -657,6 +672,9 @@ assertAllButtonsAreNonSubmit(app);
 
 app.querySelectorAll('.tab-btn')[1].click();
 assert(api.state.activeLight === 1, 'light tab should switch active light');
+const areaWidthSlider = app.querySelectorAll('input[type="range"][data-param]').find((slider) => slider.dataset.param === 'width');
+const areaHeightSlider = app.querySelectorAll('input[type="range"][data-param]').find((slider) => slider.dataset.param === 'height');
+assert(areaWidthSlider.min === '0.5' && areaHeightSlider.min === '0.5', 'area size sliders should keep a 0.5 minimum');
 
 app.querySelectorAll('.type-btn').find((button) => button.dataset.kind === 'spot').click();
 assert(api.state.lights[1].kind === 'spot', 'type toggle should switch active light to spot');
@@ -674,7 +692,8 @@ change(app.querySelector('#helper-visible'), false);
 assert(api.state.lights[1].showHelper === false, 'helper visibility control should update active light helper state');
 app.querySelector('#reset-lights').click();
 assert(api.state.activeLight === 0, 'reset should return active light to first light');
-assert(api.state.lights[2].enabled === false, 'reset should restore initial light enabled states');
+assert(api.state.lights[1].width === 0.5 && api.state.lights[1].height === 0.5, 'reset should restore the 0.5 by 0.5 area size');
+assert(api.state.lights[2].enabled === true, 'reset should restore the enabled upper-back accent light');
 assert(api.state.sessionStats.resetCount === 1, 'reset should increment reset count');
 app.querySelectorAll('.tab-btn')[1].click();
 
