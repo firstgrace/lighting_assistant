@@ -2522,7 +2522,7 @@ button {
 }
 
 .model-btn.setup-model-choice {
-  min-height: 58px;
+  min-height: 70px;
   padding: 9px 11px;
   display: flex;
   align-items: center;
@@ -2533,6 +2533,23 @@ button {
   color: #d9dee7;
   font-weight: 700;
 }
+
+.model-choice-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+
+.model-choice-copy strong { color: inherit; font-size: 0.88rem; }
+.model-choice-copy small {
+  color: #aeb4bd;
+  font-size: 0.68rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.setup-model-choice.is-selected .model-choice-copy small { color: #d9dec8; }
 
 .model-btn.setup-model-choice:hover,
 .model-btn.setup-model-choice:focus-visible {
@@ -2555,10 +2572,17 @@ button {
   border-radius: 50%;
 }
 
-.model-preview--abstract { transform: rotate(25deg); border-radius: 5px; }
-.model-preview--bust { width: 18px; height: 18px; border-radius: 50% 50% 42% 42%; }
-.model-preview--figure { width: 10px; height: 24px; border-radius: 7px; }
+.model-preview--dav { width: 18px; height: 24px; border-radius: 50% 50% 35% 35%; }
+.model-preview--pottery { width: 22px; height: 24px; border-radius: 8px 8px 45% 45%; }
+.model-preview--kuma { width: 25px; height: 18px; border-radius: 10px 7px 8px 8px; }
 .setup-model-choice.is-selected .model-preview { border-color: #ecff72; }
+
+.setup-model-error {
+  margin: 8px 0 0;
+  color: #ffb8b8;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
 
 .setup-start-step { display: flex; align-items: center; gap: 18px; }
 .setup-start-step .setup-step-heading { flex: 1; margin: 0; }

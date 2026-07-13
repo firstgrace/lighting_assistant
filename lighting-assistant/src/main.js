@@ -11,12 +11,14 @@
 
 let THREE = null;
 let RectAreaLightUniformsLib = null;
+let GLTFLoader = null;
 let sceneCanvas = null;
 let scene = createFallbackScene();
+let sceneInitializationPromise = null;
 const PASS_SCORE = 70;
-const BASIC_TRAINING_LIGHT_COLOR = '#fffaf0';
+const BASIC_TRAINING_LIGHT_COLOR = '#fff8f4';
 const BASIC_TRAINING_LIGHT_COLOR_LABEL = '\u663c\u767d\u8272\uff085000K\u76f8\u5f53\uff09';
-const SUBJECT_MATERIAL = { color: 0x7f93a8, roughness: 0.68, metalness: 0 };
+const SUBJECT_MATERIAL = { color: 0xCBCBCB, roughness: 0.68, metalness: 0 };
 const STAGE_MATERIALS = {
   floor: 0x575b62,
   wall: 0x383b42,
@@ -41,6 +43,47 @@ const EMPTY_ILLUMINANCE_SUMMARY = Object.freeze({
 const SURFACE_SAMPLE_OFFSET = 0.035;
 const SUBMISSION_IMAGE_MAX_WIDTH = 420;
 const SUBMISSION_IMAGE_JPEG_QUALITY = 0.7;
+const DEFAULT_SUBJECT_TARGET_HEIGHT = 2.7;
+const STUDY_SUBJECT_MATERIAL_MODE = 'study_white';
+const MODEL_DEFINITIONS = Object.freeze([
+  {
+    id: 'dav',
+    label: '石膏胸像',
+    description: '面の凹凸と陰影を観察しやすい石膏像',
+    url: '/models/dav.glb',
+    targetHeight: DEFAULT_SUBJECT_TARGET_HEIGHT,
+    rotation: { x: Math.PI / 2, y: 0, z: 0 },
+    verticalOffset: 0,
+    cameraYawOffset: 0,
+    cameraPitch: 58,
+    materialMode: STUDY_SUBJECT_MATERIAL_MODE,
+  },
+  {
+    id: 'pottery',
+    label: '陶器',
+    description: '曲面にできる光の勾配を観察しやすい陶器',
+    url: '/models/pottery.glb',
+    targetHeight: DEFAULT_SUBJECT_TARGET_HEIGHT,
+    rotation: { x: Math.PI / 2, y: 0, z: 0 },
+    verticalOffset: 0,
+    cameraYawOffset: 0,
+    cameraPitch: 58,
+    materialMode: STUDY_SUBJECT_MATERIAL_MODE,
+  },
+  {
+    id: 'kuma',
+    label: '木彫り熊',
+    description: '複雑な輪郭と凹凸を持つ木彫りの熊',
+    url: '/models/kuma.glb',
+    targetHeight: DEFAULT_SUBJECT_TARGET_HEIGHT,
+    rotation: { x: Math.PI / 2, y: 0, z: Math.PI },
+    // Temporary scene-unit correction; tune this value visually in the browser.
+    verticalOffset: -0.8,
+    cameraYawOffset: 0,
+    cameraPitch: 58,
+    materialMode: STUDY_SUBJECT_MATERIAL_MODE,
+  },
+]);
 const reasonTagOptions = [
   '\u660e\u308b\u3055\u304c\u3061\u3087\u3046\u3069\u3088\u3044',
   '\u660e\u308b\u3059\u304e\u308b',
@@ -208,23 +251,25 @@ const tasks = [...tutorialTasks, ...mainTasks];
 // from the five comparable foundation tasks.
 const setupTasks = mainTasks;
 
-const models = [
-  { id: 'abstract', label: '\u5e7e\u4f55' },
-  { id: 'bust', label: '\u80f8\u50cf' },
-  { id: 'figure', label: '\u4eba\u578b' },
-];
+const models = MODEL_DEFINITIONS;
 
 const defaultLights = [
-  { enabled: true, showHelper: true, kind: 'spot', x: 3.2, y: 4.2, z: 4.8, intensity: 320, spread: 0.42, width: 3, height: 3, elevation: -35, azimuth: -135, color: BASIC_TRAINING_LIGHT_COLOR },
-  { enabled: true, showHelper: true, kind: 'area', x: -4, y: 2.5, z: 4, intensity: 260, spread: 0.55, width: 5, height: 3.8, elevation: -35, azimuth: 130, color: BASIC_TRAINING_LIGHT_COLOR },
-  { enabled: false, showHelper: true, kind: 'spot', x: 0, y: -5, z: 3, intensity: 140, spread: 0.5, width: 2.4, height: 2.4, elevation: -18, azimuth: 0, color: BASIC_TRAINING_LIGHT_COLOR },
+  // Main light: front-right, leaving enough shadow for users to shape the result.
+  { enabled: true, showHelper: true, kind: 'spot', x: 2.8, y: 3.6, z: 4.6, intensity: 240, spread: 0.38, width: 0.5, height: 0.5, elevation: -43, azimuth: -142, color: BASIC_TRAINING_LIGHT_COLOR },
+  // Fill light: front-left. Keep the small default area so its softness remains adjustable.
+  { enabled: true, showHelper: true, kind: 'area', x: -2.6, y: 3, z: 3.2, intensity: 130, spread: 0.55, width: 0.5, height: 0.5, elevation: -34, azimuth: 126, color: BASIC_TRAINING_LIGHT_COLOR },
+  // A modest upper-back accent. It is intentionally weaker than the main light.
+  { enabled: true, showHelper: true, kind: 'spot', x: 0, y: -3.5, z: 5.2, intensity: 85, spread: 0.55, width: 0.5, height: 0.5, elevation: -56, azimuth: 0, color: BASIC_TRAINING_LIGHT_COLOR },
 ];
 
 const state = {
   phase: 'setup',
   taskId: 'tutorial_light_object',
-  modelId: 'abstract',
+  modelId: MODEL_DEFINITIONS[0].id,
   setupSelections: { task: false, model: false },
+  modelLoading: false,
+  modelError: '',
+  subjectBounds: null,
   participantId: '',
   sessionId: '',
   submissions: [],
@@ -239,7 +284,7 @@ const state = {
   surfaceIlluminanceSamples: [],
   surfaceIlluminanceSummary: clone(EMPTY_ILLUMINANCE_SUMMARY),
   uniformVisibilityEvaluation: null,
-  camera: { theta: -38, phi: 54, radius: 9.2, view: 'free' },
+  camera: { theta: 0, phi: 58, radius: 9.2, view: 'free' },
   feedbackPosition: { x: 0, y: 0 },
   persistenceMessage: '',
   persistenceStatus: null,
@@ -278,11 +323,15 @@ class LightingScene {
     this.lightObjects = [];
     this.markers = [];
     this.modelGroup = new THREE.Group();
+    this.modelLoadToken = 0;
+    this.loadedModelId = '';
+    this.activeModelDefinition = null;
+    this.subjectBounds = null;
+    this.gltfLoader = GLTFLoader ? new GLTFLoader() : null;
     this.surfaceSampleGroup = new THREE.Group();
     this.surfaceSampleGroup.userData.excludeFromCapture = true;
 
     this.buildStage();
-    this.setModel(state.modelId);
     this.buildLights();
     this.scene.add(this.surfaceSampleGroup);
     this.updateCamera(state.camera);
@@ -327,43 +376,112 @@ class LightingScene {
     this.scene.add(this.modelGroup);
   }
 
-  setModel(modelId) {
-    this.modelGroup.clear();
-    const mat = new THREE.MeshStandardMaterial(SUBJECT_MATERIAL);
-
-    if (modelId === 'bust') {
-      const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.82, 1.45, 12, 32), mat);
-      torso.position.set(0, 1.38, 0);
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.56, 32, 32), mat);
-      head.position.set(0, 2.55, 0);
-      this.modelGroup.add(torso, head);
-    } else if (modelId === 'figure') {
-      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 1.75, 10, 24), mat);
-      body.position.set(0, 1.75, 0);
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.34, 24, 24), mat);
-      head.position.set(0, 2.92, 0);
-      const armGeo = new THREE.BoxGeometry(0.28, 1.3, 0.28);
-      const leftArm = new THREE.Mesh(armGeo, mat);
-      leftArm.position.set(-0.64, 1.78, 0);
-      leftArm.rotation.z = -0.2;
-      const rightArm = new THREE.Mesh(armGeo, mat);
-      rightArm.position.set(0.64, 1.78, 0);
-      rightArm.rotation.z = 0.2;
-      this.modelGroup.add(body, head, leftArm, rightArm);
-    } else {
-      const geo = new THREE.IcosahedronGeometry(0.98, 1);
-      const form = new THREE.Mesh(geo, mat);
-      form.position.set(0, 1.7, 0);
-      form.rotation.set(0.3, 0.7, 0.1);
-      this.modelGroup.add(form);
+  async loadModel(modelId) {
+    const definition = getModelDefinition(modelId);
+    if (!definition) throw new Error(`不明なモデルIDです: ${modelId}`);
+    if (!this.gltfLoader) throw new Error('GLTFLoaderを初期化できませんでした。');
+    if (this.loadedModelId === definition.id && this.modelGroup.children.length === 1) {
+      return this.getSubjectBoundsData();
     }
 
-    this.modelGroup.traverse((item) => {
-      if (item.isMesh) {
-        item.castShadow = true;
-        item.receiveShadow = true;
-      }
+    const loadToken = ++this.modelLoadToken;
+    this.disposeCurrentModel();
+    const gltf = await this.gltfLoader.loadAsync(definition.url);
+    const subject = gltf.scene || gltf.scenes?.[0];
+    if (!subject) throw new Error('GLB内に表示できるシーンがありません。');
+    if (loadToken !== this.modelLoadToken) {
+      disposeObjectResources(subject);
+      return null;
+    }
+
+    const rotation = definition.rotation || {};
+    subject.rotation.set(rotation.x || 0, rotation.y || 0, rotation.z || 0);
+    subject.updateMatrixWorld(true);
+    const sourceBounds = new THREE.Box3().setFromObject(subject);
+    const sourceSize = sourceBounds.getSize(new THREE.Vector3());
+    if (!Number.isFinite(sourceSize.y) || sourceSize.y <= 0) {
+      disposeObjectResources(subject);
+      throw new Error('モデルの高さを取得できませんでした。');
+    }
+
+    const scale = definition.targetHeight / sourceSize.y;
+    subject.scale.multiplyScalar(scale);
+    subject.updateMatrixWorld(true);
+    const scaledBounds = new THREE.Box3().setFromObject(subject);
+    const scaledCenter = scaledBounds.getCenter(new THREE.Vector3());
+    const plinthTop = this.getPlinthTopY();
+    subject.position.x -= scaledCenter.x;
+    subject.position.z -= scaledCenter.z;
+    subject.position.y += plinthTop - scaledBounds.min.y + (definition.verticalOffset || 0);
+    subject.updateMatrixWorld(true);
+
+    this.applySubjectMaterial(subject, definition.materialMode);
+    subject.traverse((item) => {
+      if (!item.isMesh) return;
+      item.castShadow = true;
+      item.receiveShadow = true;
     });
+    this.modelGroup.add(subject);
+    this.loadedModelId = definition.id;
+    this.activeModelDefinition = definition;
+    this.updateSubjectBounds();
+    this.fitCameraToSubject();
+    return this.getSubjectBoundsData();
+  }
+
+  setModel(modelId) {
+    return this.loadModel(modelId);
+  }
+
+  applySubjectMaterial(subject, materialMode) {
+    if (materialMode !== STUDY_SUBJECT_MATERIAL_MODE) return;
+    const studyMaterial = new THREE.MeshStandardMaterial(SUBJECT_MATERIAL);
+    const replacedMaterials = new Set();
+    subject.traverse((item) => {
+      if (!item.isMesh) return;
+      forEachMaterial(item.material, (material) => replacedMaterials.add(material));
+      item.material = studyMaterial;
+    });
+    replacedMaterials.forEach(disposeMaterialResources);
+  }
+
+  getPlinthTopY() {
+    if (!this.plinth) return 0;
+    return new THREE.Box3().setFromObject(this.plinth).max.y;
+  }
+
+  updateSubjectBounds() {
+    const bounds = new THREE.Box3().setFromObject(this.modelGroup);
+    if (bounds.isEmpty()) {
+      this.subjectBounds = null;
+      return null;
+    }
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+    this.subjectBounds = {
+      center: { x: center.x, y: center.y, z: center.z },
+      size: { x: size.x, y: size.y, z: size.z },
+      radius: sphere.radius,
+    };
+    return this.subjectBounds;
+  }
+
+  getSubjectBoundsData() {
+    return this.subjectBounds ? clone(this.subjectBounds) : null;
+  }
+
+  disposeCurrentModel() {
+    this.modelGroup.children.slice().forEach((child) => {
+      this.modelGroup.remove(child);
+      disposeObjectResources(child);
+    });
+    this.loadedModelId = '';
+    this.activeModelDefinition = null;
+    this.subjectBounds = null;
+  }
+
+  fitCameraToSubject() {
     this.fitCameraToObject();
   }
 
@@ -537,16 +655,24 @@ class LightingScene {
 
   fitCameraToObject() {
     if (!THREE || !this.modelGroup) return;
-    const bounds = new THREE.Box3().setFromObject(this.modelGroup);
-    if (this.plinth) bounds.expandByObject(this.plinth);
-    if (bounds.isEmpty()) return;
-    const sphere = bounds.getBoundingSphere(new THREE.Sphere());
-    this.cameraTarget.copy(sphere.center);
+    const subjectBounds = new THREE.Box3().setFromObject(this.modelGroup);
+    if (subjectBounds.isEmpty()) return;
+    const framingBounds = subjectBounds.clone();
+    if (this.plinth) framingBounds.expandByObject(this.plinth);
+    const sphere = framingBounds.getBoundingSphere(new THREE.Sphere());
+    this.cameraTarget.copy(subjectBounds.getCenter(new THREE.Vector3()));
     const aspect = this.camera.aspect || 1;
     const verticalFov = degToRad(this.camera.fov);
     const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * aspect);
     const limitingFov = Math.min(verticalFov, horizontalFov);
-    state.camera.radius = clamp((sphere.radius / Math.sin(limitingFov / 2)) * 1.3, 5, 15);
+    const definition = this.activeModelDefinition || getModelDefinition(state.modelId);
+    state.camera = {
+      ...state.camera,
+      view: 'free',
+      theta: Number.isFinite(definition?.cameraYawOffset) ? definition.cameraYawOffset : 0,
+      phi: Number.isFinite(definition?.cameraPitch) ? definition.cameraPitch : 58,
+      radius: clamp((sphere.radius / Math.sin(limitingFov / 2)) * 1.35, 5, 15),
+    };
     this.updateCamera(state.camera);
   }
 
@@ -559,20 +685,22 @@ class LightingScene {
 render();
 if (typeof window !== 'undefined' && window.__LIGHTING_ASSISTANT_SKIP_3D__) {
   drawFallbackCanvas();
+  sceneInitializationPromise = Promise.resolve(scene);
 } else {
-  initScene();
+  sceneInitializationPromise = initScene();
 }
 
 async function initScene() {
   try {
-    const [threeModule, rectModule] = await Promise.all([
+    const [threeModule, rectModule, loaderModule] = await Promise.all([
       import('https://esm.sh/three@0.165.0'),
       import('https://esm.sh/three@0.165.0/examples/jsm/lights/RectAreaLightUniformsLib.js'),
+      import('https://esm.sh/three@0.165.0/examples/jsm/loaders/GLTFLoader.js'),
     ]);
     THREE = threeModule;
     RectAreaLightUniformsLib = rectModule.RectAreaLightUniformsLib;
+    GLTFLoader = loaderModule.GLTFLoader;
     scene = new LightingScene();
-    scene.setModel(state.modelId);
     scene.updateLights(state.lights);
     scene.updateCamera(state.camera);
     scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
@@ -584,8 +712,12 @@ async function initScene() {
 
 function createFallbackScene() {
   return {
+    isFallback: true,
     buildLights: drawFallbackCanvas,
-    setModel: drawFallbackCanvas,
+    loadModel: () => null,
+    setModel: () => null,
+    fitCameraToSubject: () => {},
+    getSubjectBoundsData: () => null,
     updateCamera: drawFallbackCanvas,
     updateLights: drawFallbackCanvas,
     updateSurfaceSamples: () => {},
@@ -652,7 +784,7 @@ function render() {
 function renderSetup() {
   // The setup screen is a quiet entry point. The live scene appears after starting.
   setRealtimeSceneVisible(false);
-  const canStart = state.setupSelections.task && state.setupSelections.model;
+  const canStart = state.setupSelections.task && state.setupSelections.model && !state.modelLoading;
   const selectedSetupTask = setupTasks.find((task) => task.id === state.taskId) || null;
   const initialDescription = selectedSetupTask
     ? selectedSetupTask.description
@@ -692,7 +824,7 @@ function renderSetup() {
               <div><h2 id="setup-model-title">\u4f5c\u54c1\u3092\u9078\u3076</h2><p>\u7167\u3089\u3059\u5bfe\u8c61\u3092\u9078\u3073\u307e\u3059</p></div>
             </header>
             <div class="model-grid setup-model-grid">
-              ${models.map((model) => `<button type="button" class="model-btn setup-model-choice ${state.setupSelections.model && state.modelId === model.id ? 'is-selected' : ''}" data-model="${model.id}" aria-pressed="${state.setupSelections.model && state.modelId === model.id}"><span class="model-preview model-preview--${model.id}" aria-hidden="true"></span><span>${model.label}</span></button>`).join('')}
+              ${models.map((model) => `<button type="button" class="model-btn setup-model-choice ${state.setupSelections.model && state.modelId === model.id ? 'is-selected' : ''}" data-model="${model.id}" aria-pressed="${state.setupSelections.model && state.modelId === model.id}" ${state.modelLoading ? 'disabled' : ''}><span class="model-preview model-preview--${model.id}" aria-hidden="true"></span><span class="model-choice-copy"><strong>${model.label}</strong><small>${model.description}</small></span></button>`).join('')}
             </div>
           </section>
           <section class="setup-step setup-start-step" aria-labelledby="setup-start-title">
@@ -700,7 +832,8 @@ function renderSetup() {
               <span class="setup-step-number">3</span>
               <div><h2 id="setup-start-title">\u4f53\u9a13\u3092\u59cb\u3081\u308b</h2><p>${canStart ? '\u6e96\u5099\u304c\u3067\u304d\u307e\u3057\u305f\u3002\u7167\u660e\u306e\u64cd\u4f5c\u3092\u59cb\u3081\u3089\u308c\u307e\u3059\u3002' : '\u304a\u984c\u3068\u4f5c\u54c1\u3092\u9078\u3076\u3068\u3001\u4f53\u9a13\u3092\u59cb\u3081\u3089\u308c\u307e\u3059\u3002'}</p></div>
             </header>
-            <button type="button" class="primary-btn setup-start-button" id="start" ${canStart ? '' : 'disabled'}>\u4f53\u9a13\u3092\u59cb\u3081\u308b</button>
+            <button type="button" class="primary-btn setup-start-button" id="start" ${canStart ? '' : 'disabled'} aria-busy="${state.modelLoading}">${state.modelLoading ? '\u4f5c\u54c1\u3092\u8aad\u307f\u8fbc\u307f\u4e2d...' : '\u4f53\u9a13\u3092\u59cb\u3081\u308b'}</button>
+            ${state.modelError ? `<p class="setup-model-error" role="alert">${state.modelError}</p>` : ''}
           </section>
         </div>
         <details class="setup-details">
@@ -734,9 +867,8 @@ function renderSetup() {
     button.addEventListener('click', () => {
       state.modelId = button.dataset.model;
       state.setupSelections.model = true;
-      updateDerivedIlluminance();
-      scene.setModel(state.modelId);
-      scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
+      state.modelError = '';
+      state.subjectBounds = null;
       renderSetup();
     });
   });
@@ -1610,6 +1742,33 @@ function bindMapDrag() {
 }
 
 function startTask() {
+  if (state.modelLoading) return;
+  state.modelLoading = true;
+  state.modelError = '';
+  if (state.phase === 'setup') renderSetup();
+
+  if (typeof window !== 'undefined' && window.__LIGHTING_ASSISTANT_SKIP_3D__) {
+    finishStartingTask();
+    return;
+  }
+
+  Promise.resolve(sceneInitializationPromise)
+    .then(() => scene.loadModel(state.modelId))
+    .then((bounds) => {
+      if (bounds) state.subjectBounds = normalizeSubjectBounds(bounds);
+      finishStartingTask();
+    })
+    .catch((error) => {
+      console.error('Failed to load selected subject model.', error);
+      state.phase = 'setup';
+      state.modelLoading = false;
+      state.modelError = `作品を読み込めませんでした。${error?.message || 'ファイルを確認してください。'}`;
+      renderSetup();
+    });
+}
+
+function finishStartingTask() {
+  state.modelLoading = false;
   state.phase = 'operation';
   state.activeLight = 0;
   state.taskId = normalizeTaskId(state.taskId);
@@ -1625,6 +1784,8 @@ function startTask() {
   state.persistenceMessage = '';
   state.completionMessage = '';
   state.completionError = '';
+  const loadedBounds = scene.getSubjectBoundsData?.();
+  state.subjectBounds = normalizeSubjectBounds(loadedBounds) || state.subjectBounds;
   updateDerivedIlluminance();
   scene.buildLights();
   scene.updateLights(state.lights);
@@ -2609,9 +2770,23 @@ function isSampleFacingAnyEnabledLight(sample, lights) {
   });
 }
 
-function generateSurfaceMeasurementPoints(modelId = 'abstract') {
-  const center = { x: 0, y: 0, z: modelId === 'figure' ? 1.95 : modelId === 'bust' ? 1.85 : 1.7 };
-  const radius = modelId === 'figure' ? 0.82 : modelId === 'bust' ? 0.95 : 0.98;
+function generateSurfaceMeasurementPoints(modelId = MODEL_DEFINITIONS[0].id) {
+  const definition = getModelDefinition(modelId) || MODEL_DEFINITIONS[0];
+  const threeBounds = normalizeSubjectBounds(state.subjectBounds);
+  const center = threeBounds
+    ? { x: threeBounds.center.x, y: threeBounds.center.z, z: threeBounds.center.y }
+    : { x: 0, y: 0, z: 0.38 + definition.targetHeight / 2 };
+  const radii = threeBounds
+    ? {
+      x: Math.max(threeBounds.size.x * 0.46, 0.16),
+      y: Math.max(threeBounds.size.z * 0.46, 0.16),
+      z: Math.max(threeBounds.size.y * 0.48, 0.2),
+    }
+    : {
+      x: definition.targetHeight * 0.32,
+      y: definition.targetHeight * 0.32,
+      z: definition.targetHeight * 0.48,
+    };
   const rings = [
     { z: 0.76, count: 8 },
     { z: 0.28, count: 10 },
@@ -2623,13 +2798,14 @@ function generateSurfaceMeasurementPoints(modelId = 'abstract') {
     const radial = Math.sqrt(Math.max(0, 1 - ring.z ** 2));
     for (let i = 0; i < ring.count; i += 1) {
       const a = (Math.PI * 2 * i) / ring.count + ringIndex * 0.18;
-      const normal = normalizeVector({ x: Math.cos(a) * radial, y: Math.sin(a) * radial, z: ring.z });
+      const unit = { x: Math.cos(a) * radial, y: Math.sin(a) * radial, z: ring.z };
+      const normal = normalizeVector({ x: unit.x / radii.x, y: unit.y / radii.y, z: unit.z / radii.z });
       samples.push({
         id: `${modelId}-${ringIndex}-${i}`,
         position: {
-          x: center.x + normal.x * radius,
-          y: center.y + normal.y * radius,
-          z: center.z + normal.z * radius,
+          x: center.x + unit.x * radii.x,
+          y: center.y + unit.y * radii.y,
+          z: center.z + unit.z * radii.z,
         },
         normal,
         illuminance: null,
@@ -2869,6 +3045,7 @@ function buildSubmissionRecord(task = currentTask(), result = state.result) {
     createdAt: result?.createdAt || new Date().toISOString(),
     taskId: task.id,
     taskLabel: task.label,
+    subjectModel: buildSubjectModelMetadata(state.modelId),
     lightingState: {
       lights: state.lights.map((light, index) => serializeLightState(light, index)),
     },
@@ -3003,12 +3180,42 @@ function downloadSubmissionJson() {
 }
 
 function getSubjectCaptureBounds(modelId) {
-  const table = {
-    abstract: { center: { x: 0, y: 1.7, z: 0 }, height: 2 },
-    bust: { center: { x: 0, y: 1.75, z: 0 }, height: 2.7 },
-    figure: { center: { x: 0, y: 1.75, z: 0 }, height: 3.1 },
+  const measured = normalizeSubjectBounds(state.subjectBounds || scene.getSubjectBoundsData?.());
+  if (measured) {
+    return {
+      center: finiteVector(measured.center),
+      height: Math.max(measured.size.y, 0.1),
+    };
+  }
+  const definition = getModelDefinition(modelId) || MODEL_DEFINITIONS[0];
+  return {
+    center: { x: 0, y: 0.38 + definition.targetHeight / 2, z: 0 },
+    height: definition.targetHeight,
   };
-  return table[modelId] || table.abstract;
+}
+
+function getModelDefinition(modelId) {
+  return MODEL_DEFINITIONS.find((definition) => definition.id === modelId) || null;
+}
+
+function buildSubjectModelMetadata(modelId) {
+  const definition = getModelDefinition(modelId) || MODEL_DEFINITIONS[0];
+  return {
+    modelId: definition.id,
+    modelLabel: definition.label,
+    materialMode: definition.materialMode,
+  };
+}
+
+function normalizeSubjectBounds(bounds) {
+  if (!bounds?.center || !bounds?.size) return null;
+  const normalized = {
+    center: finiteVector(bounds.center),
+    size: finiteVector(bounds.size),
+    radius: finiteNumber(bounds.radius),
+  };
+  if (normalized.size.x <= 0 || normalized.size.y <= 0 || normalized.size.z <= 0) return null;
+  return normalized;
 }
 
 function normalizeTaskId(taskId) {
@@ -3199,6 +3406,30 @@ function transparentPixelDataUrl() {
   return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
 }
 
+function forEachMaterial(materialOrMaterials, callback) {
+  const materials = Array.isArray(materialOrMaterials) ? materialOrMaterials : [materialOrMaterials];
+  materials.filter(Boolean).forEach(callback);
+}
+
+function disposeMaterialResources(material) {
+  if (!material) return;
+  Object.values(material).forEach((value) => {
+    if (value?.isTexture && typeof value.dispose === 'function') value.dispose();
+  });
+  material.dispose?.();
+}
+
+function disposeObjectResources(root) {
+  const geometries = new Set();
+  const materials = new Set();
+  root?.traverse?.((item) => {
+    if (item.geometry) geometries.add(item.geometry);
+    forEachMaterial(item.material, (material) => materials.add(material));
+  });
+  geometries.forEach((geometry) => geometry.dispose?.());
+  materials.forEach(disposeMaterialResources);
+}
+
 function finiteVector(vector) {
   return {
     x: finiteNumber(vector?.x),
@@ -3304,6 +3535,9 @@ if (typeof window !== 'undefined') {
     get tasks() {
       return tasks;
     },
+    get modelDefinitions() {
+      return MODEL_DEFINITIONS;
+    },
     render,
     renderSetup,
     renderOperation,
@@ -3317,6 +3551,15 @@ if (typeof window !== 'undefined') {
     evaluateTask,
     updateDerivedIlluminance,
     generateSurfaceMeasurementPoints,
+    getSubjectCaptureBounds,
+    getModelDefinition,
+    buildSubjectModelMetadata,
+    normalizeSubjectBounds,
+    getSceneDebugState: () => ({
+      loadedModelId: scene.loadedModelId || '',
+      subjectRootCount: scene.modelGroup?.children?.length ?? 0,
+      subjectBounds: normalizeSubjectBounds(scene.getSubjectBoundsData?.()),
+    }),
     summarizeIlluminanceSamples,
     calculateDirectIlluminanceAtSample,
     initializeParticipant,
