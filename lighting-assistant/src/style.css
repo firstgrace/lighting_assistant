@@ -2748,6 +2748,26 @@ button {
   font-size: 0.82rem;
   line-height: 1.55;
 }
+.open-campus-hint-chat { display: grid; gap: 9px; width: min(720px, 100%); }
+.open-campus-hint-prompt { margin: 2px 0 0; color: #f4f5f7; font-size: 0.9rem; font-weight: 700; }
+.open-campus-hint-topics { display: flex; flex-wrap: wrap; gap: 7px; }
+.open-campus-hint-topic {
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid rgba(226, 232, 240, 0.16);
+  border-radius: 5px;
+  background: #22252a;
+  color: #d8dce2;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.open-campus-hint-topic:hover,
+.open-campus-hint-topic:focus-visible { border-color: rgba(236, 255, 114, 0.55); background: #2a2e31; outline: none; }
+.open-campus-hint-topic.is-selected { border-color: #ecff72; background: rgba(236, 255, 114, 0.12); color: #f2ff9c; }
+.open-campus-hint-answer { margin: 0; padding: 9px 11px; border-left: 2px solid #ecff72; background: #20231f; color: #edf0d6; font-size: 0.82rem; line-height: 1.55; }
+.open-campus-hint-other { display: grid; gap: 6px; color: #c9cdd3; font-size: 0.78rem; }
+.open-campus-hint-other textarea { width: 100%; min-height: 54px; resize: vertical; }
 
 .work-card.open-campus-work-card {
   display: grid;
@@ -2768,6 +2788,8 @@ button {
   border-top: 1px solid rgba(226, 232, 240, 0.12);
   background: #17191d;
 }
+
+.open-campus-finish-note { margin: 0 0 9px; color: #aab0bb; font-size: 0.76rem; line-height: 1.45; }
 
 .operation-fixed-footer .primary-btn {
   width: 100%;
