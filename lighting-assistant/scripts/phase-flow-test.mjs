@@ -818,19 +818,31 @@ assert(api.state.sessionId.startsWith('session-'), 'open campus mode should issu
 assert(api.state.openCampus.hintAvailable === true && api.state.assist.hint === true, 'open campus mode should always make hints available');
 assert(!app.querySelector('#surface-samples-visible'), 'open campus operation should hide the measurement point debug toggle');
 assert(!app.querySelector('#save') && !app.querySelector('#render') && !app.querySelector('#back'), 'open campus operation should hide researcher navigation and snapshot actions');
-assert(app.querySelector('#open-campus-hint-toggle'), 'shown hint condition should provide a collapsible hint control');
+assert(app.querySelector('#open-campus-hint-toggle'), 'open campus operation should provide a collapsible hint control');
 assert(app.querySelector('.open-campus-work-card') && app.querySelector('.operation-controls-scroll') && app.querySelector('.operation-fixed-footer'), 'open campus controls should use fixed header, scrolling controls, and fixed footer');
-assert(app.innerHTML.includes('体験を終えてアンケートへ'), 'open campus footer should keep the survey action visible');
+assert(app.innerHTML.includes('これ以上調整しても、見やすさがあまり変わらないと感じたら終了してください。') && app.innerHTML.includes('この照明で体験を終える'), 'open campus footer should provide the revised completion guidance and action');
 assert(api.state.openCampus.interactionMetrics.sessionStartedAt, 'interaction timing should begin when operation becomes available');
 
 app.querySelector('#open-campus-hint-toggle').click();
-assert(api.state.openCampus.interactionMetrics.hintOpenCount === 1, 'opening a closed hint should increment hint count once');
-assert(api.state.openCampus.interactionMetrics.hintUsed === true && api.state.openCampus.interactionMetrics.firstHintOpenedAt, 'opening a hint should record use and the first opening time');
+assert(api.state.openCampus.interactionMetrics.hintMetrics.hintUsed === true && api.state.openCampus.interactionMetrics.hintMetrics.firstHintOpenedAtElapsedMs !== null, 'opening a hint should record use and the first opening time');
+assert(api.state.openCampus.interactionMetrics.hintMetrics.hintPanelOpenCount === 1, 'opening a hint panel should increment its dedicated count');
+assert(app.innerHTML.includes('どの操作で困っていますか？'), 'hint panel should ask for the operation topic');
+app.querySelector('[data-hint-topic="move_light"]').click();
+app.querySelector('[data-hint-topic="camera"]').click();
+app.querySelector('[data-hint-topic="other"]').click();
+input(app.querySelector('#open-campus-hint-other-question'), '上面図の記号が分かりにくい');
+assert(api.state.openCampus.interactionMetrics.hintMetrics.hintQuestionCount === 2, 'other text should not count until it is explicitly recorded');
+app.querySelector('#open-campus-hint-other-record').click();
+assert(api.state.openCampus.interactionMetrics.hintMetrics.hintQuestionCount === 3, 'each recorded hint topic should be counted separately');
+assert(api.state.openCampus.interactionMetrics.hintMetrics.hintPanelSessions.length === 1, 'three questions in one panel should produce one panel session');
+assert(api.state.openCampus.interactionMetrics.hintMetrics.hintPanelSessions[0].questions.length === 3, 'three questions should be nested inside the panel session');
+assert(api.state.openCampus.interactionMetrics.hintMetrics.hintPanelSessions[0].questions[2].otherQuestion === '上面図の記号が分かりにくい', 'other hint questions should be recorded only after the record action');
 app.querySelector('#open-campus-hint-toggle').click();
-assert(api.state.openCampus.interactionMetrics.hintTotalViewDurationMs >= 0, 'closing a hint should finalize its view duration');
+assert(api.state.openCampus.interactionMetrics.hintMetrics.hintTotalViewDurationMs >= 0, 'closing a hint should finalize its view duration');
 app.querySelectorAll('.tab-btn')[1].click();
 assert(api.state.openCampus.interactionMetrics.lightSelectionCount === 1, 'switching light tabs should count once');
-assert(api.state.openCampus.interactionMetrics.timeFromHintCloseToNextActionMs >= 0 && api.state.openCampus.interactionMetrics.actionAfterHint === 'light_selection', 'the first action after closing a hint should be recorded');
+const openCampusHintPanelSession = api.state.openCampus.interactionMetrics.hintMetrics.hintPanelSessions[0];
+assert(openCampusHintPanelSession.outcomeAfterHint === 'action_performed' && openCampusHintPanelSession.timeToNextActionMs >= 0 && openCampusHintPanelSession.nextAction === 'light_selection', 'the first action after closing a hint should be recorded on its panel session');
 const openCampusXSlider = app.querySelectorAll('input[type="range"][data-param]').find((element) => element.dataset.param === 'x');
 input(openCampusXSlider, 1);
 input(openCampusXSlider, 2);
@@ -868,6 +880,8 @@ assert(api.state.openCampus.interactionMetrics.resetCount === 1, 'reset should c
 assert(api.state.openCampus.interactionMetrics.firstInteractionAt, 'first committed interaction should record a timestamp');
 assert(api.state.openCampus.interactionMetrics.timeToFirstInteractionMs >= 0, 'time to first interaction should be non-negative');
 
+app.querySelector('#open-campus-hint-toggle').click();
+app.querySelector('[data-hint-topic="brightness"]').click();
 app.querySelector('#submit').click();
 assert(api.state.phase === 'feedback' && api.state.openCampus.phase === 'evaluation', 'lighting confirmation should advance to open campus evaluation');
 assert(app.querySelector('#complete-open-campus-survey'), 'open campus evaluation should use the dedicated usability survey');
@@ -880,6 +894,7 @@ assert(!app.querySelector('#open-campus-hint-not-used-reason'), 'hint users shou
 assert(api.state.openCampus.interactionMetrics.durationMs >= 0, 'operation completion should finalize duration');
 assert(api.state.openCampus.interactionMetrics.completed === false, 'metrics should remain incomplete before survey save');
 assert(api.state.openCampus.interactionMetrics.finalLightingState.lights.length === 3, 'operation completion should capture final lighting state');
+assert(api.state.openCampus.interactionMetrics.hintMetrics.hintPanelSessions[1].outcomeAfterHint === 'ended_without_action', 'an open hint panel should be finalized without action when the experience ends');
 assert(api.state.result.submissionImages.length === 1 && api.state.result.submissionImages[0].viewId === 'user_view', 'open campus confirmation should capture only one final preview image');
 change(app.querySelectorAll('input[name="easeOfUseRating"]').find((element) => element.value === '4'), true);
 change(app.querySelectorAll('input[name="controlSuccessRating"]').find((element) => element.value === '3'), true);
@@ -897,7 +912,7 @@ assert(app.innerHTML.includes('ご協力ありがとうございました'), 'co
 const openCampusSubmission = api.loadSubmissions().find((submission) => submission.submissionId === openCampusSubmissionId);
 assert(openCampusSubmission, 'completed open campus submission should be persisted');
 assert(openCampusSubmission.studyType === 'open_campus_operation_demo', 'open campus submission should have a distinct study type');
-assert(openCampusSubmission.schemaVersion === 'open_campus_operation_demo_v2', 'open campus submission should use the dedicated schema version');
+assert(openCampusSubmission.schemaVersion === 'open_campus_operation_demo_v5', 'open campus submission should use the dedicated schema version');
 assert(openCampusSubmission.condition.hintAvailable === true, 'open campus condition should retain fixed hint availability once');
 assert(openCampusSubmission.condition.taskId === 'uniform_visibility' && openCampusSubmission.condition.subjectModelId === 'dav', 'open campus condition should retain task and subject identifiers');
 assert(openCampusSubmission.timing.startedAt && openCampusSubmission.timing.completedAt, 'open campus timing should retain start and completion once');
@@ -909,9 +924,11 @@ assert(openCampusSubmission.usabilityResponse.improvementComment === 'position c
 assert(openCampusSubmission.usabilityResponse.generalComment === 'interesting lighting experience', 'open campus submission should retain general comments');
 assert(openCampusSubmission.interactionMetrics.completed === true, 'survey save should mark interaction metrics completed');
 assert(openCampusSubmission.interactionMetrics.positionChangeCount === 2, 'saved metrics should retain committed position operations');
-assert(openCampusSubmission.interactionMetrics.hintOpenCount === 1, 'saved metrics should retain hint open count');
-assert(openCampusSubmission.interactionMetrics.hintUsed === true && openCampusSubmission.interactionMetrics.firstHintOpenedAt, 'saved metrics should retain hint use details');
-assert(openCampusSubmission.interactionMetrics.timeFromHintCloseToNextActionMs >= 0 && openCampusSubmission.interactionMetrics.actionAfterHint === 'light_selection', 'saved metrics should retain the action following a hint');
+assert(openCampusSubmission.interactionMetrics.hintMetrics.hintPanelOpenCount === 2 && openCampusSubmission.interactionMetrics.hintMetrics.hintQuestionCount === 4, 'saved metrics should distinguish panel opens from topic questions');
+assert(openCampusSubmission.interactionMetrics.hintMetrics.hintUsed === true && openCampusSubmission.interactionMetrics.hintMetrics.firstHintOpenedAtElapsedMs !== null, 'saved metrics should retain hint use details');
+assert(openCampusSubmission.interactionMetrics.hintMetrics.hintPanelSessions.length === 2 && openCampusSubmission.interactionMetrics.hintMetrics.hintPanelSessions[0].questions.length === 3, 'saved metrics should retain one panel session containing three questions');
+assert(openCampusSubmission.interactionMetrics.hintMetrics.hintPanelSessions[0].outcomeAfterHint === 'action_performed', 'saved hint panel sessions should retain the action outcome');
+assert(openCampusSubmission.interactionMetrics.hintMetrics.hintPanelSessions[1].outcomeAfterHint === 'ended_without_action', 'saved hint panel sessions should retain an ended-without-action outcome');
 assert(openCampusSubmission.finalLightingState.lights.length === 3, 'open campus submission should retain one final lighting state');
 assert(openCampusSubmission.finalPreviewImage?.viewId === 'user_view', 'open campus submission should retain only the user-view preview');
 assert(openCampusSubmission.interactionEvents.some((entry) => entry.control === 'x' && entry.lightId === 'light-2'), 'open campus submission should keep compact committed interaction events');
@@ -922,7 +939,7 @@ api.renderAdminView();
 assert(app.innerHTML.includes('操作の分かりやすさ') && app.innerHTML.includes('Final preview'), 'admin should render the open campus-specific list and detail fields');
 assert(api.loadSubmissions().length === submissionsBeforeOpenCampus + 1, 'open campus completion should add exactly one completed submission');
 
-api.state.openCampus.interactionMetrics.hintUsed = false;
+api.state.openCampus.interactionMetrics.hintMetrics.hintUsed = false;
 api.state.openCampus.phase = 'evaluation';
 api.state.phase = 'feedback';
 api.render();
@@ -940,8 +957,8 @@ assert(api.state.participantId !== openCampusParticipantId && api.state.sessionI
 assert(api.state.result === null && api.state.history.length === 0, 'next participant should clear evaluation and operation logs');
 assert(api.state.openCampus.usabilityResponse.easeOfUseRating === null, 'next participant should clear usability response');
 assert(api.state.openCampus.interactionMetrics.sessionStartedAt === null && api.state.openCampus.interactionMetrics.firstInteractionAt === null, 'next participant should clear interaction timing');
-assert(api.state.openCampus.interactionMetrics.positionChangeCount === 0 && api.state.openCampus.interactionMetrics.hintOpenCount === 0, 'next participant should clear interaction counters');
-assert(api.state.openCampus.hintOpenedAtMs === null && api.state.openCampus.lastHintClosedAtMs === null && Object.keys(api.state.openCampus.activeGestures).length === 0, 'next participant should clear hint and gesture timing state');
+assert(api.state.openCampus.interactionMetrics.positionChangeCount === 0 && api.state.openCampus.interactionMetrics.hintMetrics.hintPanelOpenCount === 0, 'next participant should clear interaction counters');
+assert(api.state.openCampus.hintOpenedAtMs === null && api.state.openCampus.activeHintPanelSessionIndex === null && api.state.openCampus.pendingHintPanelSessionIndex === null && Object.keys(api.state.openCampus.activeGestures).length === 0, 'next participant should clear hint and gesture timing state');
 assert(api.state.camera.theta === 0 && api.state.camera.phi === 58, 'next participant should receive the initial camera state');
 assert(api.state.lights[1].width === 0.5 && api.state.lights[1].height === 0.5, 'next participant should receive initial lighting state');
 assert(api.state.completionError === '' && api.state.modelError === '', 'next participant should not inherit errors');

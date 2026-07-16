@@ -46,7 +46,7 @@ const SUBMISSION_IMAGE_JPEG_QUALITY = 0.7;
 const DEFAULT_SUBJECT_TARGET_HEIGHT = 2.7;
 const STUDY_SUBJECT_MATERIAL_MODE = 'study_white';
 const OPEN_CAMPUS_STUDY_TYPE = 'open_campus_operation_demo';
-const OPEN_CAMPUS_SUBMISSION_SCHEMA_VERSION = 'open_campus_operation_demo_v2';
+const OPEN_CAMPUS_SUBMISSION_SCHEMA_VERSION = 'open_campus_operation_demo_v5';
 const OPEN_CAMPUS_TASK_ID = 'uniform_visibility';
 const OPEN_CAMPUS_MODEL_ID = 'dav';
 const MODEL_DEFINITIONS = Object.freeze([
@@ -126,6 +126,16 @@ const openCampusDifficultControlOptions = [
   '上面図を使う',
   '特になかった',
   'その他',
+];
+const openCampusHintTopics = [
+  { id: 'select_light', label: 'ライトを選びたい', answer: '右側上部の 1 / 2 / 3 を押すと、調整するライトを切り替えられます。' },
+  { id: 'move_light', label: 'ライトの位置を変えたい', answer: '上面図をドラッグして大まかに動かし、左右・前後・高さで細かく調整できます。' },
+  { id: 'brightness', label: '明るさを変えたい', answer: '「光の性質」の明るさを動かすと、選択中ライトの出力を変えられます。' },
+  { id: 'spread_or_size', label: '光の広がり・面積を変えたい', answer: 'スポットは光の広がり、エリアは光の横幅・縦幅を調整できます。' },
+  { id: 'direction', label: '光の向きを変えたい', answer: '「光の向き」の上下方向・左右方向で、選択中ライトの向きを変えられます。' },
+  { id: 'camera', label: '視点を変えたい', answer: 'プレビューをドラッグすると視点を回転でき、下部の視点ボタンと遠近でも調整できます。' },
+  { id: 'top_map', label: '上面図の使い方を知りたい', answer: '上面図のライト記号をドラッグすると、選択中ライトの左右・前後位置を動かせます。' },
+  { id: 'other', label: 'その他', answer: '' },
 ];
 const trainingMode = 'basic';
 const allowLightColorEditing = trainingMode !== 'basic';
@@ -822,7 +832,10 @@ function createOpenCampusState() {
     interactionMetrics: createEmptyOpenCampusInteractionMetrics(),
     hintExpanded: false,
     hintOpenedAtMs: null,
-    lastHintClosedAtMs: null,
+    activeHintPanelSessionIndex: null,
+    pendingHintPanelSessionIndex: null,
+    selectedHintTopicId: '',
+    hintOtherQuestionDraft: '',
     activeGestures: {},
     surveyError: '',
   };
@@ -856,14 +869,20 @@ function createEmptyOpenCampusInteractionMetrics() {
     lightToggleCount: 0,
     cameraInteractionCount: 0,
     resetCount: 0,
-    hintUsed: false,
-    hintOpenCount: 0,
-    hintTotalViewDurationMs: 0,
-    firstHintOpenedAt: null,
-    timeFromHintCloseToNextActionMs: null,
-    actionAfterHint: null,
+    hintMetrics: createEmptyOpenCampusHintMetrics(),
     completed: false,
     finalLightingState: null,
+  };
+}
+
+function createEmptyOpenCampusHintMetrics() {
+  return {
+    hintUsed: false,
+    hintPanelOpenCount: 0,
+    hintQuestionCount: 0,
+    hintTotalViewDurationMs: 0,
+    firstHintOpenedAtElapsedMs: null,
+    hintPanelSessions: [],
   };
 }
 
@@ -1047,7 +1066,10 @@ function startOpenCampusInteractionMetrics() {
   state.openCampus.interactionMetrics.sessionStartedAt = new Date().toISOString();
   state.openCampus.hintExpanded = false;
   state.openCampus.hintOpenedAtMs = null;
-  state.openCampus.lastHintClosedAtMs = null;
+  state.openCampus.activeHintPanelSessionIndex = null;
+  state.openCampus.pendingHintPanelSessionIndex = null;
+  state.openCampus.selectedHintTopicId = '';
+  state.openCampus.hintOtherQuestionDraft = '';
   state.openCampus.activeGestures = {};
 }
 
@@ -1060,10 +1082,15 @@ function recordOpenCampusInteraction(metricKey) {
     metrics.firstInteractionAt = now.toISOString();
     metrics.timeToFirstInteractionMs = Math.max(0, now.getTime() - Date.parse(metrics.sessionStartedAt));
   }
-  if (Number.isFinite(state.openCampus.lastHintClosedAtMs) && metrics.timeFromHintCloseToNextActionMs === null) {
-    metrics.timeFromHintCloseToNextActionMs = Math.max(0, now.getTime() - state.openCampus.lastHintClosedAtMs);
-    metrics.actionAfterHint = openCampusActionName(metricKey);
+  const pendingIndex = state.openCampus.pendingHintPanelSessionIndex;
+  const pendingSession = metrics.hintMetrics.hintPanelSessions[pendingIndex];
+  if (pendingSession?.outcomeAfterHint === null) {
+    const actionAtElapsedMs = openCampusElapsedMs(now.getTime());
+    pendingSession.outcomeAfterHint = 'action_performed';
+    pendingSession.timeToNextActionMs = Math.max(0, actionAtElapsedMs - pendingSession.closedAtElapsedMs);
+    pendingSession.nextAction = openCampusActionName(metricKey);
   }
+  state.openCampus.pendingHintPanelSessionIndex = null;
   metrics[metricKey] += 1;
 }
 
@@ -1089,17 +1116,38 @@ function recordOpenCampusParameterInteraction(param) {
   if (['spread', 'width', 'height'].includes(param)) recordOpenCampusInteraction('areaSizeChangeCount');
 }
 
+function openCampusElapsedMs(nowMs = Date.now()) {
+  const startedAtMs = Date.parse(state.openCampus.interactionMetrics?.sessionStartedAt || '');
+  return Number.isFinite(startedAtMs) ? Math.max(0, nowMs - startedAtMs) : 0;
+}
+
 function closeOpenCampusHintTiming() {
   if (!isOpenCampusMode()) return;
   if (Number.isFinite(state.openCampus.hintOpenedAtMs)) {
     const closedAtMs = Date.now();
-    state.openCampus.interactionMetrics.hintTotalViewDurationMs += Math.max(0, closedAtMs - state.openCampus.hintOpenedAtMs);
-    if (state.openCampus.interactionMetrics.timeFromHintCloseToNextActionMs === null) {
-      state.openCampus.lastHintClosedAtMs = closedAtMs;
+    const viewDurationMs = Math.max(0, closedAtMs - state.openCampus.hintOpenedAtMs);
+    const metrics = state.openCampus.interactionMetrics;
+    const hintMetrics = metrics.hintMetrics;
+    hintMetrics.hintTotalViewDurationMs += viewDurationMs;
+    const session = hintMetrics.hintPanelSessions[state.openCampus.activeHintPanelSessionIndex];
+    if (session) {
+      session.closedAtElapsedMs = openCampusElapsedMs(closedAtMs);
+      session.viewDurationMs = viewDurationMs;
+      state.openCampus.pendingHintPanelSessionIndex = state.openCampus.activeHintPanelSessionIndex;
     }
   }
   state.openCampus.hintOpenedAtMs = null;
   state.openCampus.hintExpanded = false;
+  state.openCampus.activeHintPanelSessionIndex = null;
+  state.openCampus.selectedHintTopicId = '';
+  state.openCampus.hintOtherQuestionDraft = '';
+}
+
+function finalizePendingHintPanelAsEnded() {
+  const metrics = state.openCampus.interactionMetrics;
+  const session = metrics.hintMetrics.hintPanelSessions[state.openCampus.pendingHintPanelSessionIndex];
+  if (session?.outcomeAfterHint === null) session.outcomeAfterHint = 'ended_without_action';
+  state.openCampus.pendingHintPanelSessionIndex = null;
 }
 
 function toggleOpenCampusHint() {
@@ -1109,12 +1157,28 @@ function toggleOpenCampusHint() {
   if (state.openCampus.hintExpanded) {
     closeOpenCampusHintTiming();
   } else {
+    finalizePendingHintPanelAsEnded();
     state.openCampus.hintExpanded = true;
     const openedAt = new Date();
     state.openCampus.hintOpenedAtMs = openedAt.getTime();
-    state.openCampus.interactionMetrics.hintUsed = true;
-    state.openCampus.interactionMetrics.firstHintOpenedAt ||= openedAt.toISOString();
-    state.openCampus.interactionMetrics.hintOpenCount += 1;
+    const hintMetrics = state.openCampus.interactionMetrics.hintMetrics;
+    hintMetrics.hintUsed = true;
+    hintMetrics.firstHintOpenedAtElapsedMs ??= openCampusElapsedMs(openedAt.getTime());
+    hintMetrics.hintPanelOpenCount += 1;
+    hintMetrics.hintPanelSessions.push({
+      openedAtElapsedMs: openCampusElapsedMs(openedAt.getTime()),
+      closedAtElapsedMs: null,
+      viewDurationMs: null,
+      outcomeAfterHint: null,
+      timeToNextActionMs: null,
+      nextAction: null,
+      questions: [],
+    });
+    state.openCampus.activeHintPanelSessionIndex = hintMetrics.hintPanelSessions.length - 1;
+    state.openCampus.pendingHintPanelSessionIndex = null;
+    state.openCampus.selectedHintTopicId = '';
+    state.openCampus.hintOtherQuestionDraft = '';
+    refreshOpenCampusHintPanel();
   }
   if (panel) panel.hidden = !state.openCampus.hintExpanded;
   if (button) {
@@ -1123,10 +1187,70 @@ function toggleOpenCampusHint() {
   }
 }
 
+function selectOpenCampusHintTopic(topicId) {
+  if (!isOpenCampusMode() || !state.openCampus.hintExpanded) return;
+  const topic = openCampusHintTopics.find((candidate) => candidate.id === topicId);
+  if (!topic) return;
+  state.openCampus.selectedHintTopicId = topic.id;
+  state.openCampus.hintOtherQuestionDraft = '';
+  if (topic.id !== 'other') addOpenCampusHintQuestion(topic.id);
+  refreshOpenCampusHintPanel();
+}
+
+function addOpenCampusHintQuestion(topicId, otherQuestion = '') {
+  const topic = openCampusHintTopics.find((candidate) => candidate.id === topicId);
+  const hintMetrics = state.openCampus.interactionMetrics.hintMetrics;
+  const session = hintMetrics.hintPanelSessions[state.openCampus.activeHintPanelSessionIndex];
+  if (!topic || !session) return false;
+  const selectedAtElapsedMs = openCampusElapsedMs();
+  session.questions.push({
+    selectedAtElapsedMs,
+    selectedTopic: topic.id,
+    otherQuestion,
+    answerShownAtElapsedMs: topic.id === 'other' ? null : selectedAtElapsedMs,
+  });
+  hintMetrics.hintQuestionCount += 1;
+  return true;
+}
+
+function updateOpenCampusHintOtherQuestion(value) {
+  state.openCampus.hintOtherQuestionDraft = String(value || '');
+}
+
+function recordOpenCampusHintOtherQuestion() {
+  const question = state.openCampus.hintOtherQuestionDraft.trim();
+  if (!question) return;
+  if (addOpenCampusHintQuestion('other', question)) {
+    state.openCampus.hintOtherQuestionDraft = '';
+    state.openCampus.selectedHintTopicId = '';
+    refreshOpenCampusHintPanel();
+  }
+}
+
+function refreshOpenCampusHintPanel() {
+  const panel = app.querySelector('#open-campus-hint-panel');
+  // Replace only a panel that owns nested controls.
+  if (panel?.querySelectorAll?.('[data-hint-topic]')?.length) {
+    panel.innerHTML = renderOpenCampusHintPanel();
+    bindOpenCampusHintPanel();
+  }
+}
+
+function bindOpenCampusHintPanel() {
+  app.querySelectorAll('[data-hint-topic]').forEach((button) => {
+    button.addEventListener('click', () => selectOpenCampusHintTopic(button.dataset.hintTopic));
+  });
+  app.querySelector('#open-campus-hint-other-question')?.addEventListener('input', (event) => {
+    updateOpenCampusHintOtherQuestion(event.target.value);
+  });
+  app.querySelector('#open-campus-hint-other-record')?.addEventListener('click', recordOpenCampusHintOtherQuestion);
+}
+
 function finishOpenCampusOperationMetrics() {
   if (!isOpenCampusMode()) return;
   closeOpenCampusHintTiming();
   const metrics = state.openCampus.interactionMetrics;
+  finalizePendingHintPanelAsEnded();
   const endedAtMs = Date.now();
   metrics.durationMs = metrics.sessionStartedAt
     ? Math.max(0, endedAtMs - Date.parse(metrics.sessionStartedAt))
@@ -1286,7 +1410,7 @@ function renderOperation() {
       ${openCampus ? `<section class="open-campus-hint-strip">
         <button type="button" class="secondary-btn" id="open-campus-hint-toggle" aria-expanded="${state.openCampus.hintExpanded}">${state.openCampus.hintExpanded ? 'ヒントを閉じる' : 'ヒントを見る'}</button>
         <div id="open-campus-hint-panel" ${state.openCampus.hintExpanded ? '' : 'hidden'}>
-          <ul>${hints.map((hint) => `<li>${hint}</li>`).join('')}</ul>
+          ${renderOpenCampusHintPanel()}
         </div>
       </section>` : openCampus ? '' : `<section class="hint-strip">
         <div class="hint-label">\u30d2\u30f3\u30c8</div>
@@ -1389,7 +1513,8 @@ function renderOperation() {
           </section>
           </div>
           ${openCampus ? `<footer class="operation-fixed-footer">
-            <button type="button" class="primary-btn" id="submit">体験を終えてアンケートへ</button>
+            <p class="open-campus-finish-note">これ以上調整しても、見やすさがあまり変わらないと感じたら終了してください。</p>
+            <button type="button" class="primary-btn" id="submit">この照明で体験を終える</button>
           </footer>` : `<section class="control-section control-section--submit" aria-labelledby="light-submit-title">
             <div class="control-section-heading"><h3 id="light-submit-title">E. \u7167\u660e\u3092\u78ba\u5b9a\u3057\u3066\u8a55\u4fa1\u3078\u9032\u3080</h3></div>
             <div class="submit-wrap">
@@ -1404,10 +1529,28 @@ function renderOperation() {
   bindOperation();
 }
 
+function renderOpenCampusHintPanel() {
+  const selectedTopic = openCampusHintTopics.find((topic) => topic.id === state.openCampus.selectedHintTopicId);
+  return `
+    <div class="open-campus-hint-chat" role="dialog" aria-label="操作ヒント">
+      <p class="open-campus-hint-prompt">どの操作で困っていますか？</p>
+      <div class="open-campus-hint-topics">
+        ${openCampusHintTopics.map((topic) => `<button type="button" class="open-campus-hint-topic ${topic.id === selectedTopic?.id ? 'is-selected' : ''}" data-hint-topic="${topic.id}">${topic.label}</button>`).join('')}
+      </div>
+      <label class="open-campus-hint-other" ${selectedTopic?.id === 'other' ? '' : 'hidden'}>
+          <span>困っていることを入力してください</span>
+          <textarea id="open-campus-hint-other-question" rows="2" placeholder="自由に入力してください">${escapeHtml(state.openCampus.hintOtherQuestionDraft)}</textarea>
+          <button type="button" class="secondary-btn" id="open-campus-hint-other-record">質問を記録</button>
+      </label>
+      ${selectedTopic?.answer ? `<p class="open-campus-hint-answer" role="status">${selectedTopic.answer}</p>` : ''}
+    </div>
+  `;
+}
+
 function renderOpenCampusUsabilitySurvey() {
   setRealtimeSceneVisible(false);
   const response = state.openCampus.usabilityResponse || createEmptyOpenCampusUsabilityResponse();
-  const hintUsed = state.openCampus.interactionMetrics.hintUsed === true;
+  const hintUsed = state.openCampus.interactionMetrics.hintMetrics.hintUsed === true;
   app.innerHTML = `
     <main class="screen open-campus-survey-screen scene-obscured">
       <section class="open-campus-survey-card">
@@ -1485,10 +1628,10 @@ function readOpenCampusUsabilityResponse() {
     difficultControls: Array.from(app.querySelectorAll('input[name="difficultControls"]'))
       .filter((input) => input.checked)
       .map((input) => input.value),
-    hintHelpfulnessRating: state.openCampus.interactionMetrics.hintUsed === true
+    hintHelpfulnessRating: state.openCampus.interactionMetrics.hintMetrics.hintUsed === true
       ? selectedNumber('hintHelpfulnessRating')
       : null,
-    hintNotUsedReason: state.openCampus.interactionMetrics.hintUsed === true
+    hintNotUsedReason: state.openCampus.interactionMetrics.hintMetrics.hintUsed === true
       ? ''
       : app.querySelector('#open-campus-hint-not-used-reason')?.value || '',
     improvementComment: app.querySelector('#open-campus-improvement-comment')?.value || '',
@@ -1528,7 +1671,7 @@ function normalizeDifficultControlSelection(changedInput) {
 function validateOpenCampusUsabilityResponse(response) {
   if (response.easeOfUseRating === null) return '「操作方法は分かりやすかったですか」を選択してください。';
   if (response.controlSuccessRating === null) return '「思いどおりに照明を調整できましたか」を選択してください。';
-  if (state.openCampus.interactionMetrics.hintUsed === true && response.hintHelpfulnessRating === null) {
+  if (state.openCampus.interactionMetrics.hintMetrics.hintUsed === true && response.hintHelpfulnessRating === null) {
     return '「ヒントは役に立ちましたか」を選択してください。';
   }
   return '';
@@ -1870,6 +2013,7 @@ function renderOpenCampusSubmissionDetail(submission) {
       ${adminJsonBlock('condition', condition)}
       ${adminJsonBlock('timing', timing)}
       ${adminJsonBlock('interactionMetrics', submission.interactionMetrics || {})}
+      ${adminJsonBlock('hintMetrics', submission.interactionMetrics?.hintMetrics || {})}
       ${adminJsonBlock('usabilityResponse', response)}
       ${adminJsonBlock('finalLightingState', summarizeLightingState(submission.finalLightingState))}
       ${adminJsonBlock('interactionEvents', submission.interactionEvents || [])}
@@ -2324,6 +2468,7 @@ function bindOperation() {
   });
   app.querySelector('#submit').addEventListener('click', submit);
   app.querySelector('#open-campus-hint-toggle')?.addEventListener('click', toggleOpenCampusHint);
+  bindOpenCampusHintPanel();
   bindPreviewDrag();
   bindMapDrag();
 }
@@ -3827,12 +3972,7 @@ function buildOpenCampusInteractionMetricSummary(metrics) {
     lightToggleCount: metrics.lightToggleCount,
     cameraInteractionCount: metrics.cameraInteractionCount,
     resetCount: metrics.resetCount,
-    hintUsed: metrics.hintUsed === true,
-    hintOpenCount: metrics.hintOpenCount,
-    hintTotalViewDurationMs: metrics.hintTotalViewDurationMs,
-    firstHintOpenedAt: metrics.firstHintOpenedAt,
-    timeFromHintCloseToNextActionMs: metrics.timeFromHintCloseToNextActionMs,
-    actionAfterHint: metrics.actionAfterHint,
+    hintMetrics: clone(metrics.hintMetrics || createEmptyOpenCampusHintMetrics()),
     completed: metrics.completed === true,
   };
 }
