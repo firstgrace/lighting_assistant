@@ -45,6 +45,10 @@ const SUBMISSION_IMAGE_MAX_WIDTH = 420;
 const SUBMISSION_IMAGE_JPEG_QUALITY = 0.7;
 const DEFAULT_SUBJECT_TARGET_HEIGHT = 2.7;
 const STUDY_SUBJECT_MATERIAL_MODE = 'study_white';
+const OPEN_CAMPUS_STUDY_TYPE = 'open_campus_operation_demo';
+const OPEN_CAMPUS_SUBMISSION_SCHEMA_VERSION = 'open_campus_operation_demo_v2';
+const OPEN_CAMPUS_TASK_ID = 'uniform_visibility';
+const OPEN_CAMPUS_MODEL_ID = 'dav';
 const MODEL_DEFINITIONS = Object.freeze([
   {
     id: 'dav',
@@ -110,6 +114,18 @@ const impressionTagOptions = [
   '\u6696\u304b\u3044',
   '\u51b7\u305f\u3044',
   '\u305d\u306e\u4ed6',
+];
+const openCampusDifficultControlOptions = [
+  'ライトを選ぶ',
+  'ライトを点灯・消灯する',
+  'ライトの位置を変える',
+  'ライトの明るさを変える',
+  '光の広がり・面積を変える',
+  '光の向きを変える',
+  'カメラの視点を変える',
+  '上面図を使う',
+  '特になかった',
+  'その他',
 ];
 const trainingMode = 'basic';
 const allowLightColorEditing = trainingMode !== 'basic';
@@ -291,6 +307,7 @@ const state = {
   completionMessage: '',
   completionError: '',
   feedbackImageViewId: 'user_view',
+  openCampus: createOpenCampusState(),
   admin: { authenticated: false, passcodeInput: '', selectedSubmissionId: '', error: '', message: '', importText: '' },
   result: null,
 };
@@ -299,6 +316,7 @@ let setupPreviewTaskId = null;
 
 const app = document.querySelector('#app');
 initializeParticipant();
+initializeOpenCampusMode();
 syncSubmissionsFromStore();
 
 class LightingScene {
@@ -776,10 +794,355 @@ function render() {
     renderAdminView();
     return;
   }
+  if (isOpenCampusMode()) {
+    renderOpenCampusMode();
+    return;
+  }
   if (state.phase === 'setup') renderSetup();
   if (state.phase === 'operation') renderOperation();
   if (state.phase === 'feedback') renderFeedback();
 }
+
+// ==============================
+// Open Campus Mode
+// ==============================
+
+function createOpenCampusState() {
+  return {
+    enabled: getUrlParameter('mode') === 'open-campus',
+    phase: 'entry',
+    consent: false,
+    participantId: '',
+    sessionId: '',
+    startedAt: '',
+    completedAt: '',
+    hintAvailable: true,
+    completed: false,
+    usabilityResponse: createEmptyOpenCampusUsabilityResponse(),
+    interactionMetrics: createEmptyOpenCampusInteractionMetrics(),
+    hintExpanded: false,
+    hintOpenedAtMs: null,
+    lastHintClosedAtMs: null,
+    activeGestures: {},
+    surveyError: '',
+  };
+}
+
+function createEmptyOpenCampusUsabilityResponse() {
+  return {
+    easeOfUseRating: null,
+    controlSuccessRating: null,
+    difficultControls: [],
+    hintHelpfulnessRating: null,
+    hintNotUsedReason: '',
+    improvementComment: '',
+    generalComment: '',
+  };
+}
+
+function createEmptyOpenCampusInteractionMetrics() {
+  return {
+    sessionStartedAt: null,
+    firstInteractionAt: null,
+    completedAt: null,
+    durationMs: null,
+    timeToFirstInteractionMs: null,
+    positionChangeCount: 0,
+    brightnessChangeCount: 0,
+    directionChangeCount: 0,
+    areaSizeChangeCount: 0,
+    lightSelectionCount: 0,
+    lightTypeChangeCount: 0,
+    lightToggleCount: 0,
+    cameraInteractionCount: 0,
+    resetCount: 0,
+    hintUsed: false,
+    hintOpenCount: 0,
+    hintTotalViewDurationMs: 0,
+    firstHintOpenedAt: null,
+    timeFromHintCloseToNextActionMs: null,
+    actionAfterHint: null,
+    completed: false,
+    finalLightingState: null,
+  };
+}
+
+function initializeOpenCampusMode() {
+  const enabled = getUrlParameter('mode') === 'open-campus';
+  state.openCampus = { ...createOpenCampusState(), enabled };
+  if (!enabled) return state.openCampus;
+  state.phase = 'setup';
+  state.taskId = OPEN_CAMPUS_TASK_ID;
+  state.modelId = OPEN_CAMPUS_MODEL_ID;
+  state.setupSelections = { task: true, model: true };
+  state.assist.hint = true;
+  state.assist.feedback = false;
+  state.showSurfaceSamples = false;
+  return state.openCampus;
+}
+
+function isOpenCampusMode() {
+  return state.openCampus?.enabled === true;
+}
+
+function getUrlParameter(name) {
+  if (typeof window === 'undefined' || !window.location?.search) return '';
+  try {
+    return new URLSearchParams(window.location.search).get(name)?.trim() || '';
+  } catch {
+    return '';
+  }
+}
+
+function renderOpenCampusMode() {
+  if (state.openCampus.phase === 'entry') return renderOpenCampusEntry();
+  if (state.openCampus.phase === 'consent') return renderOpenCampusConsent();
+  if (state.openCampus.phase === 'loading') return renderOpenCampusLoading();
+  if (state.openCampus.phase === 'completed') return renderOpenCampusCompletion();
+  if (state.phase === 'operation') return renderOperation();
+  if (state.phase === 'feedback') return renderFeedback();
+  return renderOpenCampusEntry();
+}
+
+function renderOpenCampusEntry() {
+  setRealtimeSceneVisible(false);
+  app.innerHTML = `
+    <main class="screen open-campus-screen">
+      <section class="open-campus-card open-campus-entry">
+        <p class="open-campus-kicker">OPEN CAMPUS LIGHTING EXPERIENCE</p>
+        <h1>光を動かして、<br />見え方をつくろう</h1>
+        <p class="open-campus-lead">3つのライトを動かして、石膏像が見やすくなる<br class="open-campus-desktop-break" />照明を自由につくる体験です。</p>
+        <div class="open-campus-time"><span>所要時間の目安</span><strong>約5分</strong></div>
+        <button type="button" class="primary-btn open-campus-primary" id="open-campus-start">体験を始める</button>
+      </section>
+    </main>
+  `;
+  app.querySelector('#open-campus-start').addEventListener('click', () => {
+    state.openCampus.phase = 'consent';
+    renderOpenCampusConsent();
+  });
+}
+
+function renderOpenCampusConsent() {
+  setRealtimeSceneVisible(false);
+  app.innerHTML = `
+    <main class="screen open-campus-screen">
+      <section class="open-campus-card open-campus-consent">
+        <p class="open-campus-step">体験を始める前に</p>
+        <h1>説明と同意</h1>
+        <div class="open-campus-consent-copy">
+          <p>この体験で入力された評価や操作記録は、卒業研究におけるシステム改善の参考として使用する場合があります。</p>
+          <p>個人を特定する情報は収集しません。</p>
+        </div>
+        <p class="open-campus-note">内容をご確認いただき、同意する場合のみ先へ進んでください。</p>
+        ${state.modelError ? `<p class="setup-model-error" role="alert">${escapeHtml(state.modelError)}</p>` : ''}
+        <button type="button" class="primary-btn open-campus-primary" id="open-campus-consent">同意して始める</button>
+        <button type="button" class="ghost-btn" id="open-campus-entry-back">入口へ戻る</button>
+      </section>
+    </main>
+  `;
+  app.querySelector('#open-campus-consent').addEventListener('click', beginOpenCampusExperience);
+  app.querySelector('#open-campus-entry-back').addEventListener('click', () => {
+    state.openCampus.phase = 'entry';
+    renderOpenCampusEntry();
+  });
+}
+
+function renderOpenCampusLoading() {
+  setRealtimeSceneVisible(false);
+  app.innerHTML = `
+    <main class="screen open-campus-screen">
+      <section class="open-campus-card open-campus-loading" aria-live="polite" aria-busy="true">
+        <span class="open-campus-spinner" aria-hidden="true"></span>
+        <h1>石膏像を準備しています</h1>
+        <p>照明制作画面が表示されるまで、そのままお待ちください。</p>
+      </section>
+    </main>
+  `;
+}
+
+function beginOpenCampusExperience() {
+  state.openCampus.consent = true;
+  state.openCampus.participantId ||= generateOpenCampusParticipantId();
+  state.openCampus.sessionId ||= generateSessionId();
+  state.openCampus.startedAt = new Date().toISOString();
+  state.openCampus.completedAt = '';
+  state.openCampus.completed = false;
+  state.openCampus.phase = 'loading';
+  state.participantId = state.openCampus.participantId;
+  state.sessionId = state.openCampus.sessionId;
+  state.taskId = OPEN_CAMPUS_TASK_ID;
+  state.modelId = OPEN_CAMPUS_MODEL_ID;
+  state.setupSelections = { task: true, model: true };
+  state.assist.hint = true;
+  state.assist.feedback = false;
+  state.showSurfaceSamples = false;
+  state.camera = { theta: 0, phi: 58, radius: 9.2, view: 'free' };
+  state.phase = 'setup';
+  startTask();
+}
+
+function generateOpenCampusParticipantId() {
+  return `open-campus-${randomIdPart()}`;
+}
+
+function renderOpenCampusCompletion() {
+  setRealtimeSceneVisible(false);
+  app.innerHTML = `
+    <main class="screen open-campus-screen">
+      <section class="open-campus-card open-campus-completion">
+        <p class="open-campus-kicker">EXPERIENCE COMPLETE</p>
+        <h1>ご協力ありがとうございました</h1>
+        <p>照明の見え方と評価を保存しました。</p>
+        <button type="button" class="primary-btn open-campus-primary" id="open-campus-next-participant">次の参加者へ</button>
+      </section>
+    </main>
+  `;
+  app.querySelector('#open-campus-next-participant').addEventListener('click', resetOpenCampusForNextParticipant);
+}
+
+function resetOpenCampusForNextParticipant() {
+  state.openCampus = {
+    ...createOpenCampusState(),
+    enabled: true,
+    participantId: generateOpenCampusParticipantId(),
+    sessionId: generateSessionId(),
+  };
+  state.phase = 'setup';
+  state.participantId = state.openCampus.participantId;
+  state.sessionId = state.openCampus.sessionId;
+  state.taskId = OPEN_CAMPUS_TASK_ID;
+  state.modelId = OPEN_CAMPUS_MODEL_ID;
+  state.setupSelections = { task: true, model: true };
+  state.activeLight = 0;
+  state.lights = normalizeBasicLightColors(clone(defaultLights));
+  state.camera = { theta: 0, phi: 58, radius: 9.2, view: 'free' };
+  state.history = [];
+  state.startedAt = 0;
+  state.startedAtIso = '';
+  state.sessionStats = createSessionStats();
+  state.showSurfaceSamples = false;
+  state.surfaceIlluminanceSamples = [];
+  state.surfaceIlluminanceSummary = clone(EMPTY_ILLUMINANCE_SUMMARY);
+  state.uniformVisibilityEvaluation = null;
+  state.result = null;
+  state.modelLoading = false;
+  state.modelError = '';
+  state.persistenceStatus = null;
+  state.persistenceMessage = '';
+  state.completionMessage = '';
+  state.completionError = '';
+  state.feedbackImageViewId = 'user_view';
+  state.feedbackPosition = { x: 0, y: 0 };
+  state.assist.hint = true;
+  state.assist.feedback = false;
+  scene.updateLights?.(state.lights);
+  scene.fitCameraToSubject?.();
+  renderOpenCampusEntry();
+}
+
+function startOpenCampusInteractionMetrics() {
+  if (!isOpenCampusMode()) return;
+  state.openCampus.interactionMetrics = createEmptyOpenCampusInteractionMetrics();
+  state.openCampus.interactionMetrics.sessionStartedAt = new Date().toISOString();
+  state.openCampus.hintExpanded = false;
+  state.openCampus.hintOpenedAtMs = null;
+  state.openCampus.lastHintClosedAtMs = null;
+  state.openCampus.activeGestures = {};
+}
+
+function recordOpenCampusInteraction(metricKey) {
+  if (!isOpenCampusMode() || state.openCampus.phase !== 'operation') return;
+  const metrics = state.openCampus.interactionMetrics;
+  if (!metrics?.sessionStartedAt || !(metricKey in metrics)) return;
+  const now = new Date();
+  if (!metrics.firstInteractionAt) {
+    metrics.firstInteractionAt = now.toISOString();
+    metrics.timeToFirstInteractionMs = Math.max(0, now.getTime() - Date.parse(metrics.sessionStartedAt));
+  }
+  if (Number.isFinite(state.openCampus.lastHintClosedAtMs) && metrics.timeFromHintCloseToNextActionMs === null) {
+    metrics.timeFromHintCloseToNextActionMs = Math.max(0, now.getTime() - state.openCampus.lastHintClosedAtMs);
+    metrics.actionAfterHint = openCampusActionName(metricKey);
+  }
+  metrics[metricKey] += 1;
+}
+
+function openCampusActionName(metricKey) {
+  const labels = {
+    positionChangeCount: 'light_position',
+    brightnessChangeCount: 'light_brightness',
+    directionChangeCount: 'light_direction',
+    areaSizeChangeCount: 'light_spread_or_size',
+    lightSelectionCount: 'light_selection',
+    lightTypeChangeCount: 'light_type',
+    lightToggleCount: 'light_toggle',
+    cameraInteractionCount: 'camera',
+    resetCount: 'reset',
+  };
+  return labels[metricKey] || metricKey;
+}
+
+function recordOpenCampusParameterInteraction(param) {
+  if (['x', 'y', 'z'].includes(param)) recordOpenCampusInteraction('positionChangeCount');
+  if (param === 'intensity') recordOpenCampusInteraction('brightnessChangeCount');
+  if (['elevation', 'azimuth'].includes(param)) recordOpenCampusInteraction('directionChangeCount');
+  if (['spread', 'width', 'height'].includes(param)) recordOpenCampusInteraction('areaSizeChangeCount');
+}
+
+function closeOpenCampusHintTiming() {
+  if (!isOpenCampusMode()) return;
+  if (Number.isFinite(state.openCampus.hintOpenedAtMs)) {
+    const closedAtMs = Date.now();
+    state.openCampus.interactionMetrics.hintTotalViewDurationMs += Math.max(0, closedAtMs - state.openCampus.hintOpenedAtMs);
+    if (state.openCampus.interactionMetrics.timeFromHintCloseToNextActionMs === null) {
+      state.openCampus.lastHintClosedAtMs = closedAtMs;
+    }
+  }
+  state.openCampus.hintOpenedAtMs = null;
+  state.openCampus.hintExpanded = false;
+}
+
+function toggleOpenCampusHint() {
+  if (!isOpenCampusMode() || state.openCampus.hintAvailable !== true) return;
+  const panel = app.querySelector('#open-campus-hint-panel');
+  const button = app.querySelector('#open-campus-hint-toggle');
+  if (state.openCampus.hintExpanded) {
+    closeOpenCampusHintTiming();
+  } else {
+    state.openCampus.hintExpanded = true;
+    const openedAt = new Date();
+    state.openCampus.hintOpenedAtMs = openedAt.getTime();
+    state.openCampus.interactionMetrics.hintUsed = true;
+    state.openCampus.interactionMetrics.firstHintOpenedAt ||= openedAt.toISOString();
+    state.openCampus.interactionMetrics.hintOpenCount += 1;
+  }
+  if (panel) panel.hidden = !state.openCampus.hintExpanded;
+  if (button) {
+    button.setAttribute?.('aria-expanded', String(state.openCampus.hintExpanded));
+    button.textContent = state.openCampus.hintExpanded ? 'ヒントを閉じる' : 'ヒントを見る';
+  }
+}
+
+function finishOpenCampusOperationMetrics() {
+  if (!isOpenCampusMode()) return;
+  closeOpenCampusHintTiming();
+  const metrics = state.openCampus.interactionMetrics;
+  const endedAtMs = Date.now();
+  metrics.durationMs = metrics.sessionStartedAt
+    ? Math.max(0, endedAtMs - Date.parse(metrics.sessionStartedAt))
+    : null;
+  metrics.finalLightingState = {
+    lights: state.lights.map((light, index) => serializeLightState(light, index)),
+  };
+}
+
+function buildStudyLogMetadata() {
+  return isOpenCampusMode()
+    ? { studyType: OPEN_CAMPUS_STUDY_TYPE }
+    : {};
+}
+
+// TODO: Add optional Google Forms / cloud export only after the study protocol is fixed.
 
 function renderSetup() {
   // The setup screen is a quiet entry point. The live scene appears after starting.
@@ -902,27 +1265,33 @@ function updateSetupTaskDescription(taskId) {
 
 function renderOperation() {
   setRealtimeSceneVisible(true);
+  const openCampus = isOpenCampusMode();
   const task = currentTask();
   const light = state.lights[state.activeLight];
   const hints = showHint(task, state);
   app.innerHTML = `
-    <main class="screen operation-screen">
+    <main class="screen operation-screen ${openCampus ? 'open-campus-operation-screen open-campus-hint-available' : ''}">
       <header class="toolbar">
         <div class="topic">
           <strong>[\u984c\uff1a${task.label}]</strong>
           <span>${task.description}</span>
           ${task.attentionTarget ? `<em class="attention-note">\u6ce8\u76ee\u9818\u57df: ${task.attentionTarget}</em>` : ''}
         </div>
-        <div class="toolbar-actions">
+        ${openCampus ? '<span class="open-campus-mode-label">オープンキャンパス体験</span>' : `<div class="toolbar-actions">
           <button type="button" class="secondary-btn" id="save">\u4fdd\u5b58</button>
           <button type="button" class="secondary-btn" id="render">\u30ec\u30f3\u30c0\u30ea\u30f3\u30b0</button>
         </div>
-        <button type="button" class="ghost-btn" id="back">\u304a\u984c\u306b\u623b\u308b</button>
+        <button type="button" class="ghost-btn" id="back">\u304a\u984c\u306b\u623b\u308b</button>`}
       </header>
-      <section class="hint-strip">
+      ${openCampus ? `<section class="open-campus-hint-strip">
+        <button type="button" class="secondary-btn" id="open-campus-hint-toggle" aria-expanded="${state.openCampus.hintExpanded}">${state.openCampus.hintExpanded ? 'ヒントを閉じる' : 'ヒントを見る'}</button>
+        <div id="open-campus-hint-panel" ${state.openCampus.hintExpanded ? '' : 'hidden'}>
+          <ul>${hints.map((hint) => `<li>${hint}</li>`).join('')}</ul>
+        </div>
+      </section>` : openCampus ? '' : `<section class="hint-strip">
         <div class="hint-label">\u30d2\u30f3\u30c8</div>
         <ul>${hints.map((hint) => `<li>${hint}</li>`).join('')}</ul>
-      </section>
+      </section>`}
       <section class="operation-grid">
         <div class="preview-shell">
           <div class="preview-head">
@@ -946,16 +1315,17 @@ function renderOperation() {
               <input id="helper-visible" type="checkbox" ${light.showHelper === false ? '' : 'checked'} />
               <span>\u30ac\u30a4\u30c9</span>
             </label>
-            <label class="preview-toggle">
+            ${openCampus ? '' : `<label class="preview-toggle">
               <input id="surface-samples-visible" type="checkbox" ${state.showSurfaceSamples ? 'checked' : ''} />
               <span>\u6e2c\u5b9a\u70b9</span>
-            </label>
+            </label>`}
           </footer>
         </div>
-        <aside class="work-card">
+        <aside class="work-card ${openCampus ? 'open-campus-work-card' : ''}">
           <div class="editor-head">
-            <h2>\u7167\u660e\u3092\u8abf\u6574</h2>
+            <h2>${openCampus ? 'ライトを調整' : '\u7167\u660e\u3092\u8abf\u6574'}</h2>
           </div>
+          <div class="${openCampus ? 'operation-controls-scroll' : 'operation-controls-standard'}">
           <section class="control-section control-section--selection" aria-labelledby="light-selection-title">
             <div class="control-section-heading">
               <h3 id="light-selection-title">A. \u30e9\u30a4\u30c8\u9078\u629e</h3>
@@ -1017,12 +1387,15 @@ function renderOperation() {
               ${slider('azimuth', '\u5de6\u53f3\u65b9\u5411', -180, 180, 1)}
             </div>
           </section>
-          <section class="control-section control-section--submit" aria-labelledby="light-submit-title">
+          </div>
+          ${openCampus ? `<footer class="operation-fixed-footer">
+            <button type="button" class="primary-btn" id="submit">体験を終えてアンケートへ</button>
+          </footer>` : `<section class="control-section control-section--submit" aria-labelledby="light-submit-title">
             <div class="control-section-heading"><h3 id="light-submit-title">E. \u7167\u660e\u3092\u78ba\u5b9a\u3057\u3066\u8a55\u4fa1\u3078\u9032\u3080</h3></div>
             <div class="submit-wrap">
               <button type="button" class="primary-btn" id="submit">\u7167\u660e\u3092\u78ba\u5b9a\u3057\u3066\u8a55\u4fa1\u3078\u9032\u3080</button>
             </div>
-          </section>
+          </section>`}
         </aside>
       </section>
     </main>
@@ -1031,8 +1404,196 @@ function renderOperation() {
   bindOperation();
 }
 
+function renderOpenCampusUsabilitySurvey() {
+  setRealtimeSceneVisible(false);
+  const response = state.openCampus.usabilityResponse || createEmptyOpenCampusUsabilityResponse();
+  const hintUsed = state.openCampus.interactionMetrics.hintUsed === true;
+  app.innerHTML = `
+    <main class="screen open-campus-survey-screen scene-obscured">
+      <section class="open-campus-survey-card">
+        <header class="open-campus-survey-head">
+          <div>
+            <p class="open-campus-kicker">操作体験アンケート</p>
+            <h1>システムの使いやすさを教えてください</h1>
+            <p>作成した照明の出来ではなく、操作方法や画面の使いやすさについてお答えください。</p>
+          </div>
+          <span class="open-campus-mode-label">約1分</span>
+        </header>
+        <form class="open-campus-usability-form" id="open-campus-usability-form">
+          ${renderOpenCampusSurveyError()}
+          <section class="open-campus-survey-question">
+            <div class="question-title-row"><span class="question-number">1</span><h2>操作方法は分かりやすかったですか</h2></div>
+            <div class="open-campus-rating-grid">${openCampusRatingOptions('easeOfUseRating', response.easeOfUseRating, ['分かりにくい', 'やや分かりにくい', 'ふつう', '分かりやすい', 'とても分かりやすい'])}</div>
+          </section>
+          <section class="open-campus-survey-question">
+            <div class="question-title-row"><span class="question-number">2</span><h2>思いどおりに照明を調整できましたか</h2></div>
+            <div class="open-campus-rating-grid">${openCampusRatingOptions('controlSuccessRating', response.controlSuccessRating, ['できなかった', 'あまりできなかった', 'どちらともいえない', 'だいたいできた', 'できた'])}</div>
+          </section>
+          <section class="open-campus-survey-question">
+            <div class="question-title-row"><span class="question-number">3</span><div><h2>難しかった操作を選んでください</h2><p>当てはまるものを複数選べます</p></div></div>
+            <div class="tag-options open-campus-difficult-controls">
+              ${openCampusDifficultControlOptions.map((option) => `<label class="tag-option"><input type="checkbox" name="difficultControls" value="${option}" ${response.difficultControls.includes(option) ? 'checked' : ''} /><span>${option}</span></label>`).join('')}
+            </div>
+          </section>
+          ${hintUsed ? `<section class="open-campus-survey-question">
+            <div class="question-title-row"><span class="question-number">4</span><h2>ヒントは役に立ちましたか</h2></div>
+            <div class="open-campus-rating-grid">${openCampusRatingOptions('hintHelpfulnessRating', response.hintHelpfulnessRating, ['役に立たなかった', 'あまり役に立たなかった', 'どちらともいえない', '役に立った', 'とても役に立った'])}</div>
+          </section>` : `<section class="open-campus-survey-question">
+            <div class="question-title-row"><span class="question-number">4</span><h2>ヒントを使わなかった理由</h2></div>
+            <textarea id="open-campus-hint-not-used-reason" rows="3" placeholder="例：自分で試してみたかった">${escapeHtml(response.hintNotUsedReason || '')}</textarea>
+          </section>`}
+          <section class="open-campus-survey-question">
+            <div class="question-title-row"><span class="question-number">5</span><h2>改善してほしい点があれば教えてください</h2></div>
+            <textarea id="open-campus-improvement-comment" rows="3" placeholder="例：ライトの向きをもっと簡単に変えたい">${escapeHtml(response.improvementComment)}</textarea>
+          </section>
+          <section class="open-campus-survey-question">
+            <div class="question-title-row"><span class="question-number">6</span><h2>体験した感想を教えてください</h2></div>
+            <textarea id="open-campus-general-comment" rows="3" placeholder="自由にご記入ください">${escapeHtml(response.generalComment)}</textarea>
+          </section>
+          <footer class="open-campus-survey-footer">
+            <button type="button" class="primary-btn open-campus-primary" id="complete-open-campus-survey">アンケートを保存して完了</button>
+          </footer>
+        </form>
+      </section>
+    </main>
+  `;
+  bindOpenCampusUsabilitySurvey();
+}
+
+function openCampusRatingOptions(name, selected, labels) {
+  return [1, 2, 3, 4, 5].map((value) => `
+    <label class="visibility-rating-option open-campus-rating-option">
+      <input type="radio" name="${name}" value="${value}" ${Number(selected) === value ? 'checked' : ''} />
+      <span class="rating-card"><strong>${value}</strong><small>${labels[value - 1]}</small></span>
+    </label>
+  `).join('');
+}
+
+function renderOpenCampusSurveyError() {
+  return state.openCampus.surveyError
+    ? `<p class="question-error open-campus-survey-error" role="alert">${escapeHtml(state.openCampus.surveyError)}</p>`
+    : '';
+}
+
+function readOpenCampusUsabilityResponse() {
+  const selectedNumber = (name) => nullableFormNumber(
+    Array.from(app.querySelectorAll(`input[name="${name}"]`)).find((input) => input.checked)?.value,
+  );
+  return {
+    easeOfUseRating: selectedNumber('easeOfUseRating'),
+    controlSuccessRating: selectedNumber('controlSuccessRating'),
+    difficultControls: Array.from(app.querySelectorAll('input[name="difficultControls"]'))
+      .filter((input) => input.checked)
+      .map((input) => input.value),
+    hintHelpfulnessRating: state.openCampus.interactionMetrics.hintUsed === true
+      ? selectedNumber('hintHelpfulnessRating')
+      : null,
+    hintNotUsedReason: state.openCampus.interactionMetrics.hintUsed === true
+      ? ''
+      : app.querySelector('#open-campus-hint-not-used-reason')?.value || '',
+    improvementComment: app.querySelector('#open-campus-improvement-comment')?.value || '',
+    generalComment: app.querySelector('#open-campus-general-comment')?.value || '',
+  };
+}
+
+function syncOpenCampusUsabilityResponse() {
+  state.openCampus.usabilityResponse = readOpenCampusUsabilityResponse();
+  state.openCampus.surveyError = '';
+}
+
+function bindOpenCampusUsabilitySurvey() {
+  Array.from(app.querySelectorAll('#open-campus-usability-form input')).forEach((input) => {
+    input.addEventListener('change', (event) => {
+      if (event.target.name === 'difficultControls') normalizeDifficultControlSelection(event.target);
+      syncOpenCampusUsabilityResponse();
+    });
+  });
+  app.querySelector('#open-campus-improvement-comment')?.addEventListener('input', syncOpenCampusUsabilityResponse);
+  app.querySelector('#open-campus-general-comment')?.addEventListener('input', syncOpenCampusUsabilityResponse);
+  app.querySelector('#open-campus-hint-not-used-reason')?.addEventListener('input', syncOpenCampusUsabilityResponse);
+  app.querySelector('#complete-open-campus-survey')?.addEventListener('click', completeOpenCampusUsabilitySurvey);
+}
+
+function normalizeDifficultControlSelection(changedInput) {
+  const noneValue = '特になかった';
+  const options = Array.from(app.querySelectorAll('input[name="difficultControls"]'));
+  if (changedInput.value === noneValue && changedInput.checked) {
+    options.forEach((input) => { if (input !== changedInput) input.checked = false; });
+  } else if (changedInput.checked) {
+    const noneInput = options.find((input) => input.value === noneValue);
+    if (noneInput) noneInput.checked = false;
+  }
+}
+
+function validateOpenCampusUsabilityResponse(response) {
+  if (response.easeOfUseRating === null) return '「操作方法は分かりやすかったですか」を選択してください。';
+  if (response.controlSuccessRating === null) return '「思いどおりに照明を調整できましたか」を選択してください。';
+  if (state.openCampus.interactionMetrics.hintUsed === true && response.hintHelpfulnessRating === null) {
+    return '「ヒントは役に立ちましたか」を選択してください。';
+  }
+  return '';
+}
+
+function completeOpenCampusUsabilitySurvey(event) {
+  event?.preventDefault?.();
+  if (!isOpenCampusMode() || !state.result) return null;
+  const response = readOpenCampusUsabilityResponse();
+  state.openCampus.usabilityResponse = response;
+  const validationError = validateOpenCampusUsabilityResponse(response);
+  if (validationError) {
+    state.openCampus.surveyError = validationError;
+    renderOpenCampusUsabilitySurvey();
+    return { ok: false, error: validationError };
+  }
+
+  const completedAt = new Date().toISOString();
+  const metrics = state.openCampus.interactionMetrics;
+  metrics.completed = true;
+  metrics.completedAt = completedAt;
+  state.openCampus.completedAt = completedAt;
+  state.history.push({
+    at: completedAt,
+    participantId: state.participantId,
+    sessionId: state.sessionId,
+    submissionId: state.result.submissionId,
+    taskId: state.taskId,
+    ...buildStudyLogMetadata(),
+    param: 'open-campus-usability-complete',
+    value: clone(response),
+    interactionMetrics: clone(metrics),
+  });
+
+  const completedSubmission = buildOpenCampusSubmissionRecord(currentTask(), state.result, response);
+  const saveResult = saveSubmission(completedSubmission);
+  setPersistenceStatus(saveResult, completedSubmission.submissionId);
+  if (!saveResult.ok) {
+    metrics.completed = false;
+    metrics.completedAt = null;
+    state.openCampus.completedAt = '';
+    if (state.history.at(-1)?.param === 'open-campus-usability-complete') state.history.pop();
+    state.openCampus.surveyError = `保存に失敗しました。入力内容は保持されています。理由: ${saveResult.error || '原因不明の保存エラーです。'}`;
+    renderOpenCampusUsabilitySurvey();
+    return saveResult;
+  }
+
+  replaceSubmissionStore(saveResult.submissions);
+  state.result.submission = completedSubmission;
+  state.result.draftSubmission = completedSubmission;
+  state.result.completed = true;
+  state.openCampus.completed = true;
+  state.openCampus.phase = 'completed';
+  state.openCampus.surveyError = '';
+  renderOpenCampusCompletion();
+  return { ok: true, submission: completedSubmission };
+}
+
 function renderFeedback() {
   setRealtimeSceneVisible(false);
+  const openCampus = isOpenCampusMode();
+  if (openCampus) {
+    renderOpenCampusUsabilitySurvey();
+    return;
+  }
   const task = currentTask();
   const result = state.result;
   app.innerHTML = `
@@ -1040,22 +1601,22 @@ function renderFeedback() {
       <section class="feedback-card evaluation-card">
         <div class="feedback-head feedback-drag-handle">
           <div>
-            <h1 class="feedback-title">\u304a\u984c\uff1a${task.label}</h1>
-            <p class="muted">\u78ba\u5b9a\u6642\u306e\u753b\u50cf\u3092\u898b\u306a\u304c\u3089\u3075\u308a\u8fd4\u308a\u307e\u3059</p>
+            <h1 class="feedback-title">${openCampus ? '見え方をふり返る' : `\u304a\u984c\uff1a${task.label}`}</h1>
+            <p class="muted">${openCampus ? '作成した照明を見ながら、感じたことを教えてください' : '\u78ba\u5b9a\u6642\u306e\u753b\u50cf\u3092\u898b\u306a\u304c\u3089\u3075\u308a\u8fd4\u308a\u307e\u3059'}</p>
           </div>
-          <div class="evaluation-nav">
+          ${openCampus ? '<span class="open-campus-mode-label">参考評価</span>' : `<div class="evaluation-nav">
             <button type="button" class="ghost-btn" id="retry">\u30ea\u30c8\u30e9\u30a4</button>
             ${state.result?.completed ? '<button type="button" class="ghost-btn" id="download-submission">JSON\u4fdd\u5b58</button>' : ''}
             <button type="button" class="ghost-btn" id="next-task">\u6b21\u306e\u304a\u984c\u3078</button>
             <button type="button" class="ghost-btn" id="new-task">\u304a\u984c\u9078\u629e\u3078</button>
-          </div>
+          </div>`}
         </div>
         <div class="feedback-body evaluation-layout">
           <section class="score-panel evaluation-form-column">
             ${renderCompletionMessage()}
             ${state.result?.completed ? renderPersistenceMessage() : ''}
             ${renderUserImpressionForm(result.userImpression)}
-            <details class="diagnostics-disclosure">
+            ${openCampus ? '' : `<details class="diagnostics-disclosure">
               <summary>\u30b7\u30b9\u30c6\u30e0\u8a3a\u65ad\u3092\u78ba\u8a8d</summary>
               <div class="diagnostics-content">
                 ${showScoreResult(result)}
@@ -1063,23 +1624,23 @@ function renderFeedback() {
                 ${showReflectionQuestion(result)}
                 ${supportCondition.showScoreAfterDecision ? `<div class="score-bars-panel">${scoreBars(result.allScores, state.taskId)}</div>` : ''}
               </div>
-            </details>
+            </details>`}
           </section>
           ${renderSubmissionImagesPreview(result.submissionImages, task)}
         </div>
       </section>
     </main>
   `;
-  app.querySelector('#retry').addEventListener('click', () => {
+  app.querySelector('#retry')?.addEventListener('click', () => {
     state.phase = 'operation';
     renderOperation();
   });
-  app.querySelector('#next-task').addEventListener('click', () => {
+  app.querySelector('#next-task')?.addEventListener('click', () => {
     const index = tasks.findIndex((item) => item.id === state.taskId);
     state.taskId = tasks[(index + 1) % tasks.length].id;
     startTask();
   });
-  app.querySelector('#new-task').addEventListener('click', () => {
+  app.querySelector('#new-task')?.addEventListener('click', () => {
     state.phase = 'setup';
     renderSetup();
   });
@@ -1221,22 +1782,44 @@ function renderSubmissionList(submissions) {
     <section class="admin-list">
       <h2>Submissions</h2>
       <div class="admin-submission-list">
-        ${submissions.map((submission) => `
-          <button type="button" class="admin-submission-row ${submission.submissionId === state.admin.selectedSubmissionId ? 'is-selected' : ''}" data-submission-id="${escapeHtml(submission.submissionId)}">
-            <span>${formatDateForDisplay(submission.createdAt)}</span>
-            <strong>${escapeHtml(submission.participantId)}</strong>
-            <span>${escapeHtml(submission.sessionId)}</span>
-            <span>${escapeHtml(submission.submissionId)}</span>
-            <span>${escapeHtml(submission.taskLabel)}</span>
-            <span>visibility: ${formatNullable(submission.userImpression?.visibilityRating)}</span>
-            <span>primary: ${escapeHtml(submission.userImpression?.primaryImpression || '--')}</span>
-            <span>${escapeHtml((submission.userImpression?.impressionTags || []).join(', ') || '--')}</span>
-            <span>${escapeHtml(shortText(submission.userImpression?.comment || '', 42))}</span>
-            <span>images: ${submission.submissionImages?.length || 0}</span>
-          </button>
-        `).join('')}
+        ${submissions.map(renderAdminSubmissionRow).join('')}
       </div>
     </section>
+  `;
+}
+
+function renderAdminSubmissionRow(submission) {
+  const selected = submission.submissionId === state.admin.selectedSubmissionId ? 'is-selected' : '';
+  if (isOpenCampusSubmission(submission)) {
+    const condition = openCampusCondition(submission);
+    const response = openCampusUsabilityResponse(submission);
+    return `
+      <button type="button" class="admin-submission-row ${selected}" data-submission-id="${escapeHtml(submission.submissionId)}">
+        <span>${formatDateForDisplay(openCampusTiming(submission).completedAt)}</span>
+        <strong>${escapeHtml(submission.participantId)}</strong>
+        <span>${escapeHtml(submission.sessionId)}</span>
+        <span>${escapeHtml(submission.submissionId)}</span>
+        <span>open campus / ${escapeHtml(condition.taskId || '--')}</span>
+        <span>操作の分かりやすさ: ${formatNullable(response.easeOfUseRating)}</span>
+        <span>調整できた: ${formatNullable(response.controlSuccessRating)}</span>
+        <span>${escapeHtml(shortText(response.generalComment || response.improvementComment || '', 42))}</span>
+        <span>preview: ${submission.finalPreviewImage ? 1 : 0}</span>
+      </button>
+    `;
+  }
+  return `
+    <button type="button" class="admin-submission-row ${selected}" data-submission-id="${escapeHtml(submission.submissionId)}">
+      <span>${formatDateForDisplay(submission.createdAt)}</span>
+      <strong>${escapeHtml(submission.participantId)}</strong>
+      <span>${escapeHtml(submission.sessionId)}</span>
+      <span>${escapeHtml(submission.submissionId)}</span>
+      <span>${escapeHtml(submission.taskLabel)}</span>
+      <span>visibility: ${formatNullable(submission.userImpression?.visibilityRating)}</span>
+      <span>primary: ${escapeHtml(submission.userImpression?.primaryImpression || '--')}</span>
+      <span>${escapeHtml((submission.userImpression?.impressionTags || []).join(', ') || '--')}</span>
+      <span>${escapeHtml(shortText(submission.userImpression?.comment || '', 42))}</span>
+      <span>images: ${submission.submissionImages?.length || 0}</span>
+    </button>
   `;
 }
 
@@ -1244,6 +1827,7 @@ function renderSubmissionDetail(submission) {
   if (!submission) {
     return '<section class="admin-detail"><h2>Detail</h2><p class="score-note">\u63d0\u51fa\u30c7\u30fc\u30bf\u3092\u9078\u629e\u3057\u3066\u304f\u3060\u3055\u3044\u3002</p></section>';
   }
+  if (isOpenCampusSubmission(submission)) return renderOpenCampusSubmissionDetail(submission);
   return `
     <section class="admin-detail">
       <div class="admin-detail-head">
@@ -1265,6 +1849,73 @@ function renderSubmissionDetail(submission) {
       ${adminJsonBlock('lightingState', summarizeLightingState(submission.lightingState))}
       ${adminJsonBlock('cameraState', submission.cameraState)}
       ${adminJsonBlock('submission JSON', submission)}
+    </section>
+  `;
+}
+
+function renderOpenCampusSubmissionDetail(submission) {
+  const condition = openCampusCondition(submission);
+  const timing = openCampusTiming(submission);
+  const response = openCampusUsabilityResponse(submission);
+  return `
+    <section class="admin-detail">
+      <div class="admin-detail-head">
+        <h2>${escapeHtml(submission.submissionId)}</h2>
+        <div class="admin-detail-actions">
+          <button type="button" class="secondary-btn" id="download-single-submission" data-submission-id="${escapeHtml(submission.submissionId)}">1件JSON保存</button>
+          <button type="button" class="secondary-btn danger-btn" id="delete-single-submission" data-submission-id="${escapeHtml(submission.submissionId)}">1件削除</button>
+        </div>
+      </div>
+      ${renderOpenCampusFinalPreview(submission.finalPreviewImage)}
+      ${adminJsonBlock('condition', condition)}
+      ${adminJsonBlock('timing', timing)}
+      ${adminJsonBlock('interactionMetrics', submission.interactionMetrics || {})}
+      ${adminJsonBlock('usabilityResponse', response)}
+      ${adminJsonBlock('finalLightingState', summarizeLightingState(submission.finalLightingState))}
+      ${adminJsonBlock('interactionEvents', submission.interactionEvents || [])}
+      ${adminJsonBlock('submission JSON', submission)}
+    </section>
+  `;
+}
+
+function isOpenCampusSubmission(submission) {
+  return submission?.studyType === OPEN_CAMPUS_STUDY_TYPE;
+}
+
+function openCampusCondition(submission) {
+  return submission?.condition || {
+    hintAvailable: submission?.hintAvailable === true,
+    taskId: submission?.taskId || null,
+    subjectModelId: submission?.subjectModel?.modelId || null,
+  };
+}
+
+function openCampusTiming(submission) {
+  return submission?.timing || {
+    startedAt: submission?.interactionMetrics?.sessionStartedAt || submission?.openCampusMetadata?.startedAt || null,
+    completedAt: submission?.interactionMetrics?.completedAt || submission?.openCampusMetadata?.completedAt || null,
+    durationMs: submission?.interactionMetrics?.durationMs || null,
+    timeToFirstInteractionMs: submission?.interactionMetrics?.timeToFirstInteractionMs || null,
+  };
+}
+
+function openCampusUsabilityResponse(submission) {
+  return submission?.usabilityResponse || submission?.openCampusUsabilityResponse || createEmptyOpenCampusUsabilityResponse();
+}
+
+function renderOpenCampusFinalPreview(image) {
+  if (!image?.dataUrl || !validDataUrl(image.dataUrl)) {
+    return '<section class="admin-block"><h3>Final preview</h3><p class="score-note">最終プレビュー画像はありません</p></section>';
+  }
+  return `
+    <section class="admin-block">
+      <h3>Final preview</h3>
+      <div class="admin-image-grid">
+        <figure>
+          <img src="${image.dataUrl}" alt="${escapeHtml(image.viewId || 'user_view')}" />
+          <figcaption>${escapeHtml(image.viewId || 'user_view')}</figcaption>
+        </figure>
+      </div>
     </section>
   `;
 }
@@ -1588,27 +2239,31 @@ function mapShape(light, active) {
 }
 
 function bindOperation() {
-  app.querySelector('#back').addEventListener('click', () => {
+  app.querySelector('#back')?.addEventListener('click', () => {
     state.phase = 'setup';
     renderSetup();
   });
-  app.querySelector('#save').addEventListener('click', () => logChange('save', 'snapshot'));
-  app.querySelector('#render').addEventListener('click', () => logChange('render', 'snapshot'));
+  app.querySelector('#save')?.addEventListener('click', () => logChange('save', 'snapshot'));
+  app.querySelector('#render')?.addEventListener('click', () => logChange('render', 'snapshot'));
   app.querySelectorAll('.tab-btn').forEach((button) => {
     button.addEventListener('click', () => {
-      state.activeLight = Number(button.dataset.lightIndex);
+      const nextLight = Number(button.dataset.lightIndex);
+      if (nextLight !== state.activeLight) recordOpenCampusInteraction('lightSelectionCount');
+      state.activeLight = nextLight;
       scene.updateLights(state.lights);
       renderOperation();
     });
   });
   app.querySelectorAll('.type-btn').forEach((button) => {
     button.addEventListener('click', () => {
+      if (button.dataset.kind !== state.lights[state.activeLight].kind) recordOpenCampusInteraction('lightTypeChangeCount');
       updateLight('kind', button.dataset.kind);
       scene.buildLights();
       renderOperation();
     });
   });
   app.querySelector('#light-enabled').addEventListener('change', (event) => {
+    recordOpenCampusInteraction('lightToggleCount');
     updateLight('enabled', event.target.checked);
     renderOperation();
   });
@@ -1616,12 +2271,15 @@ function bindOperation() {
     updateLight('showHelper', event.target.checked);
     renderOperation();
   });
-  app.querySelector('#surface-samples-visible').addEventListener('change', (event) => {
+  app.querySelector('#surface-samples-visible')?.addEventListener('change', (event) => {
     state.showSurfaceSamples = event.target.checked;
     scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
     renderOperation();
   });
-  app.querySelector('#reset-lights').addEventListener('click', resetLights);
+  app.querySelector('#reset-lights').addEventListener('click', () => {
+    recordOpenCampusInteraction('resetCount');
+    resetLights();
+  });
   app.querySelectorAll('input[type="range"][data-param]').forEach((input) => {
     input.addEventListener('input', (event) => {
       const param = event.target.dataset.param;
@@ -1631,6 +2289,7 @@ function bindOperation() {
       const param = event.target.dataset.param;
       updateLightLive(param, Number(event.target.value));
       logChange(param, state.lights[state.activeLight][param]);
+      recordOpenCampusParameterInteraction(param);
     });
   });
   app.querySelectorAll('input[type="number"][data-param]').forEach((input) => {
@@ -1639,6 +2298,7 @@ function bindOperation() {
       const value = clamp(Number(event.target.value), Number(event.target.min), Number(event.target.max));
       updateLightLive(param, value);
       logChange(param, state.lights[state.activeLight][param]);
+      recordOpenCampusParameterInteraction(param);
     });
   });
   const colorInput = app.querySelector('#color');
@@ -1653,10 +2313,17 @@ function bindOperation() {
     state.camera.radius = Number(event.target.value);
     scene.updateCamera(state.camera);
   });
+  app.querySelector('#zoom').addEventListener('change', () => {
+    recordOpenCampusInteraction('cameraInteractionCount');
+  });
   app.querySelectorAll('.view-btn').forEach((button) => {
-    button.addEventListener('click', () => setView(button.dataset.view));
+    button.addEventListener('click', () => {
+      recordOpenCampusInteraction('cameraInteractionCount');
+      setView(button.dataset.view);
+    });
   });
   app.querySelector('#submit').addEventListener('click', submit);
+  app.querySelector('#open-campus-hint-toggle')?.addEventListener('click', toggleOpenCampusHint);
   bindPreviewDrag();
   bindMapDrag();
 }
@@ -1665,10 +2332,12 @@ function bindPreviewDrag() {
   const pane = app.querySelector('#preview-stage');
   if (!pane) return;
   let dragging = false;
+  let cameraMoved = false;
   let last = { x: 0, y: 0 };
   pane.addEventListener('pointerdown', (event) => {
     if (event.target.closest('button,input,label')) return;
     dragging = true;
+    cameraMoved = false;
     last = { x: event.clientX, y: event.clientY };
     try {
       if (event.pointerId !== undefined && pane.setPointerCapture) {
@@ -1681,14 +2350,19 @@ function bindPreviewDrag() {
   pane.addEventListener('pointermove', (event) => {
     if (!dragging) return;
     state.camera.view = 'free';
+    cameraMoved = true;
     state.camera.theta += (event.clientX - last.x) * 0.35;
     state.camera.phi = clamp(state.camera.phi + (event.clientY - last.y) * 0.28, 6, 84);
     last = { x: event.clientX, y: event.clientY };
     scene.updateCamera(state.camera);
   });
-  pane.addEventListener('pointerup', () => {
+  const finishCameraDrag = () => {
+    if (dragging && cameraMoved) recordOpenCampusInteraction('cameraInteractionCount');
     dragging = false;
-  });
+    cameraMoved = false;
+  };
+  pane.addEventListener('pointerup', finishCameraDrag);
+  pane.addEventListener('pointercancel', finishCameraDrag);
 }
 
 function bindMapDrag() {
@@ -1729,6 +2403,7 @@ function bindMapDrag() {
     if (positionChanged) {
       logChange('x', state.lights[state.activeLight].x);
       logChange('y', state.lights[state.activeLight].y);
+      recordOpenCampusInteraction('positionChangeCount');
     }
     try {
       if (pointerId !== null && map.releasePointerCapture) map.releasePointerCapture(pointerId);
@@ -1745,7 +2420,10 @@ function startTask() {
   if (state.modelLoading) return;
   state.modelLoading = true;
   state.modelError = '';
-  if (state.phase === 'setup') renderSetup();
+  if (state.phase === 'setup') {
+    if (isOpenCampusMode()) renderOpenCampusLoading();
+    else renderSetup();
+  }
 
   if (typeof window !== 'undefined' && window.__LIGHTING_ASSISTANT_SKIP_3D__) {
     finishStartingTask();
@@ -1763,13 +2441,19 @@ function startTask() {
       state.phase = 'setup';
       state.modelLoading = false;
       state.modelError = `作品を読み込めませんでした。${error?.message || 'ファイルを確認してください。'}`;
-      renderSetup();
+      if (isOpenCampusMode()) {
+        state.openCampus.phase = 'consent';
+        renderOpenCampusConsent();
+      } else {
+        renderSetup();
+      }
     });
 }
 
 function finishStartingTask() {
   state.modelLoading = false;
   state.phase = 'operation';
+  if (isOpenCampusMode()) state.openCampus.phase = 'operation';
   state.activeLight = 0;
   state.taskId = normalizeTaskId(state.taskId);
   if (!state.participantId) state.participantId = generateAnonymousParticipantId();
@@ -1790,6 +2474,7 @@ function finishStartingTask() {
   scene.buildLights();
   scene.updateLights(state.lights);
   scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
+  if (isOpenCampusMode()) startOpenCampusInteractionMetrics();
   renderOperation();
 }
 
@@ -1806,6 +2491,7 @@ function resetLights() {
 }
 
 function submit() {
+  if (isOpenCampusMode()) finishOpenCampusOperationMetrics();
   const task = currentTask();
   updateDerivedIlluminance();
   const submissionId = generateSubmissionId();
@@ -1814,7 +2500,10 @@ function submit() {
   const currentScore = allScores.find((score) => score.id === state.taskId);
   const current = task.scoreEnabled === false ? null : currentScore?.score ?? 0;
   const feedbackInput = buildFeedbackInput(task, current, allScores, state);
-  const submissionImages = captureSubmissionImages();
+  // The open-campus study records one final view only. Research submissions retain five fixed views.
+  const submissionImages = isOpenCampusMode()
+    ? [captureOpenCampusFinalPreviewImage()]
+    : captureSubmissionImages();
   state.feedbackImageViewId = 'user_view';
   state.result = {
     submissionId,
@@ -1838,6 +2527,7 @@ function submit() {
     sessionId: state.sessionId,
     submissionId,
     taskId: state.taskId,
+    ...buildStudyLogMetadata(),
     param: 'decision',
     value: current,
     supportCondition: clone(supportCondition),
@@ -1854,6 +2544,7 @@ function submit() {
   state.completionMessage = '';
   state.completionError = '';
   state.phase = 'feedback';
+  if (isOpenCampusMode()) state.openCampus.phase = 'evaluation';
   render();
 }
 
@@ -1940,6 +2631,7 @@ function logChange(param, value) {
     at: new Date().toISOString(),
     elapsed: (performance.now() - state.startedAt) / 1000,
     taskId: state.taskId,
+    ...buildStudyLogMetadata(),
     supportCondition: clone(supportCondition),
     light: state.activeLight + 1,
     param,
@@ -1992,6 +2684,18 @@ function captureSubmissionImages() {
   const userCamera = clone(state.camera);
   try {
     return withCleanCaptureScene(() => getFixedCameraViews().map((viewConfig) => captureView(viewConfig)));
+  } finally {
+    restoreUserCamera(userCamera);
+  }
+}
+
+function captureOpenCampusFinalPreviewImage() {
+  const userCamera = clone(state.camera);
+  try {
+    return withCleanCaptureScene(() => captureView({
+      viewId: 'user_view',
+      ...scene.getCameraPose(),
+    }));
   } finally {
     restoreUserCamera(userCamera);
   }
@@ -2365,6 +3069,7 @@ function updateUserImpression(next) {
 
 function completeSubmission(event) {
   event?.preventDefault?.();
+  if (isOpenCampusMode()) return completeOpenCampusUsabilitySurvey(event);
   if (!state.result) return null;
   let formUserImpression;
   try {
@@ -3037,6 +3742,7 @@ function buildSubmission(task, result) {
 }
 
 function buildSubmissionRecord(task = currentTask(), result = state.result) {
+  if (isOpenCampusMode()) return buildOpenCampusSubmissionRecord(task, result);
   const userCameraPose = deriveCameraPoseFromState(state.camera);
   const record = {
     participantId: state.participantId,
@@ -3076,6 +3782,106 @@ function buildSubmissionRecord(task = currentTask(), result = state.result) {
     analysisFlags: buildAnalysisFlags(result?.userImpression, result?.submissionImages),
   };
   return sanitizeSubmissionRecord(record);
+}
+
+function buildOpenCampusSubmissionRecord(task = currentTask(), result = state.result, usabilityResponse = state.openCampus.usabilityResponse) {
+  const metrics = state.openCampus.interactionMetrics || createEmptyOpenCampusInteractionMetrics();
+  const subject = buildSubjectModelMetadata(state.modelId);
+  const finalPreviewImage = (result?.submissionImages || []).find((image) => image?.viewId === 'user_view') || null;
+  const record = {
+    schemaVersion: OPEN_CAMPUS_SUBMISSION_SCHEMA_VERSION,
+    participantId: state.participantId,
+    sessionId: state.sessionId,
+    submissionId: result?.submissionId || generateSubmissionId(),
+    studyType: OPEN_CAMPUS_STUDY_TYPE,
+    condition: {
+      hintAvailable: true,
+      taskId: task.id,
+      subjectModelId: subject.modelId,
+    },
+    timing: {
+      startedAt: metrics.sessionStartedAt,
+      completedAt: metrics.completedAt,
+      durationMs: metrics.durationMs,
+      timeToFirstInteractionMs: metrics.timeToFirstInteractionMs,
+    },
+    interactionMetrics: buildOpenCampusInteractionMetricSummary(metrics),
+    usabilityResponse: clone(usabilityResponse || createEmptyOpenCampusUsabilityResponse()),
+    finalLightingState: clone(metrics.finalLightingState || {
+      lights: state.lights.map((light, index) => serializeLightState(light, index)),
+    }),
+    finalPreviewImage: finalPreviewImage ? clone(finalPreviewImage) : null,
+    interactionEvents: buildOpenCampusInteractionEvents(state.history, metrics.sessionStartedAt),
+  };
+  return sanitizeSubmissionRecord(record);
+}
+
+function buildOpenCampusInteractionMetricSummary(metrics) {
+  return {
+    positionChangeCount: metrics.positionChangeCount,
+    brightnessChangeCount: metrics.brightnessChangeCount,
+    directionChangeCount: metrics.directionChangeCount,
+    areaSizeChangeCount: metrics.areaSizeChangeCount,
+    lightSelectionCount: metrics.lightSelectionCount,
+    lightTypeChangeCount: metrics.lightTypeChangeCount,
+    lightToggleCount: metrics.lightToggleCount,
+    cameraInteractionCount: metrics.cameraInteractionCount,
+    resetCount: metrics.resetCount,
+    hintUsed: metrics.hintUsed === true,
+    hintOpenCount: metrics.hintOpenCount,
+    hintTotalViewDurationMs: metrics.hintTotalViewDurationMs,
+    firstHintOpenedAt: metrics.firstHintOpenedAt,
+    timeFromHintCloseToNextActionMs: metrics.timeFromHintCloseToNextActionMs,
+    actionAfterHint: metrics.actionAfterHint,
+    completed: metrics.completed === true,
+  };
+}
+
+function buildOpenCampusInteractionEvents(history = [], startedAt = null) {
+  const previousValues = new Map();
+  const ignoredControls = new Set(['decision', 'open-campus-usability-complete', 'save', 'render']);
+  return (Array.isArray(history) ? history : []).flatMap((entry) => {
+    const control = String(entry?.param || '');
+    if (!control || ignoredControls.has(control)) return [];
+    const type = openCampusInteractionEventType(control);
+    if (!type) return [];
+    const lightId = Number.isInteger(entry.light) ? `light-${entry.light}` : null;
+    const key = lightId ? `${lightId}:${control}` : control;
+    const nextValue = compactInteractionValue(entry.value);
+    const event = {
+      elapsedMs: interactionElapsedMs(entry, startedAt),
+      type,
+      ...(lightId ? { lightId } : {}),
+      control,
+      ...(previousValues.has(key) ? { previousValue: previousValues.get(key) } : {}),
+      ...(nextValue !== null ? { nextValue } : {}),
+    };
+    if (nextValue !== null) previousValues.set(key, nextValue);
+    return [event];
+  });
+}
+
+function openCampusInteractionEventType(control) {
+  if (['x', 'y', 'z', 'intensity', 'spread', 'width', 'height', 'elevation', 'azimuth', 'kind', 'enabled'].includes(control)) {
+    return 'light_control';
+  }
+  if (control === 'reset') return 'reset';
+  return '';
+}
+
+function compactInteractionValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' || typeof value === 'boolean') return value;
+  return null;
+}
+
+function interactionElapsedMs(entry, startedAt) {
+  if (Number.isFinite(entry?.elapsed)) return Math.max(0, Math.round(entry.elapsed * 1000));
+  const startedAtMs = Date.parse(startedAt || '');
+  const eventAtMs = Date.parse(entry?.at || '');
+  return Number.isFinite(startedAtMs) && Number.isFinite(eventAtMs)
+    ? Math.max(0, eventAtMs - startedAtMs)
+    : 0;
 }
 
 function serializeLightState(light, index) {
@@ -3539,6 +4345,10 @@ if (typeof window !== 'undefined') {
       return MODEL_DEFINITIONS;
     },
     render,
+    isOpenCampusMode,
+    initializeOpenCampusMode,
+    renderOpenCampusMode,
+    resetOpenCampusForNextParticipant,
     renderSetup,
     renderOperation,
     renderFeedback,
@@ -3569,6 +4379,8 @@ if (typeof window !== 'undefined') {
     generateSubmissionId,
     buildSubmission,
     buildSubmissionRecord,
+    buildOpenCampusSubmissionRecord,
+    buildOpenCampusInteractionEvents,
     sanitizeSubmissionRecord,
     appendSubmissionToLog,
     downloadSubmissionJson,
