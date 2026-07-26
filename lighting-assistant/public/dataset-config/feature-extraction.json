@@ -1,0 +1,8 @@
+{
+  "darkThreshold": 0.25,
+  "shadowThreshold": 0.1,
+  "brightThreshold": 0.75,
+  "highlightThreshold": 0.95,
+  "edgeThreshold": 0.1,
+  "blurRadius": 1
+}

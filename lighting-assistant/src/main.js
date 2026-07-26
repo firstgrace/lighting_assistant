@@ -8,6 +8,25 @@
   loadSubmissions,
   saveSubmission,
 } from './dataStore.js';
+import {
+  createDefaultDatasetRecord,
+  normalizeDatasetRecord,
+  renderDatasetGeneratorView,
+} from './datasetGenerator.js';
+import {
+  createBalancedConditionRecords60,
+  createDatasetCameraViews,
+  BRIGHTNESS_TARGET_RANGES,
+  EXTREME_DARK_TARGETS,
+  getDarkReplacementRecords,
+  DATASET_GENERATOR_GIT_COMMIT,
+} from './datasetConditions.js';
+import {
+  DEFAULT_FEATURE_EXTRACTION_CONFIG,
+  extractImageFeatures,
+  imageDataFromDataUrl,
+  normalizeFeatureConfig,
+} from './imageFeatures.js';
 
 let THREE = null;
 let RectAreaLightUniformsLib = null;
@@ -15,6 +34,9 @@ let GLTFLoader = null;
 let sceneCanvas = null;
 let scene = createFallbackScene();
 let sceneInitializationPromise = null;
+let activeDatasetRecord = null;
+let datasetViewController = null;
+let datasetFeatureConfig = normalizeFeatureConfig(DEFAULT_FEATURE_EXTRACTION_CONFIG);
 const PASS_SCORE = 70;
 const BASIC_TRAINING_LIGHT_COLOR = '#fff8f4';
 const BASIC_TRAINING_LIGHT_COLOR_LABEL = '\u663c\u767d\u8272\uff085000K\u76f8\u5f53\uff09';
@@ -353,6 +375,7 @@ class LightingScene {
     this.modelGroup = new THREE.Group();
     this.modelLoadToken = 0;
     this.loadedModelId = '';
+    this.loadedMaterialMode = '';
     this.activeModelDefinition = null;
     this.subjectBounds = null;
     this.gltfLoader = GLTFLoader ? new GLTFLoader() : null;
@@ -400,15 +423,23 @@ class LightingScene {
     grid.material.transparent = true;
     grid.userData.excludeFromCapture = true;
     this.scene.add(grid);
-    this.scene.add(new THREE.HemisphereLight(0x9aa3b5, 0x111317, 0.28));
+    this.ambientLight = new THREE.HemisphereLight(0x9aa3b5, 0x111317, 0.28);
+    this.scene.add(this.ambientLight);
     this.scene.add(this.modelGroup);
   }
 
-  async loadModel(modelId) {
-    const definition = getModelDefinition(modelId);
+  async loadModel(modelId, materialMode = null) {
+    const baseDefinition = getModelDefinition(modelId);
+    const definition = baseDefinition
+      ? { ...baseDefinition, materialMode: materialMode || baseDefinition.materialMode }
+      : null;
     if (!definition) throw new Error(`不明なモデルIDです: ${modelId}`);
     if (!this.gltfLoader) throw new Error('GLTFLoaderを初期化できませんでした。');
-    if (this.loadedModelId === definition.id && this.modelGroup.children.length === 1) {
+    if (
+      this.loadedModelId === definition.id
+      && this.loadedMaterialMode === definition.materialMode
+      && this.modelGroup.children.length === 1
+    ) {
       return this.getSubjectBoundsData();
     }
 
@@ -451,6 +482,7 @@ class LightingScene {
     });
     this.modelGroup.add(subject);
     this.loadedModelId = definition.id;
+    this.loadedMaterialMode = definition.materialMode;
     this.activeModelDefinition = definition;
     this.updateSubjectBounds();
     this.fitCameraToSubject();
@@ -505,6 +537,7 @@ class LightingScene {
       disposeObjectResources(child);
     });
     this.loadedModelId = '';
+    this.loadedMaterialMode = '';
     this.activeModelDefinition = null;
     this.subjectBounds = null;
   }
@@ -525,7 +558,14 @@ class LightingScene {
     state.lights.forEach((light, index) => {
       const target = new THREE.Object3D();
       const source = light.kind === 'spot'
-        ? new THREE.SpotLight(light.color, light.intensity, 36, light.spread, 0.25, 1)
+        ? new THREE.SpotLight(
+          light.color,
+          light.intensity,
+          light.distance ?? 36,
+          light.spread,
+          light.penumbra ?? 0.25,
+          light.decay ?? 1,
+        )
         : new THREE.RectAreaLight(light.color, light.intensity, light.width, light.height);
       if (source.isSpotLight) {
         source.target = target;
@@ -557,7 +597,12 @@ class LightingScene {
       entry.light.color.set(data.color);
       entry.target.position.copy(target);
       if (entry.light.isSpotLight) {
-        entry.light.angle = clamp(data.spread, 0.08, 0.9);
+        entry.light.angle = data.datasetSource
+          ? clamp(data.spread, 0.001, Math.PI / 2)
+          : clamp(data.spread, 0.08, 0.9);
+        entry.light.penumbra = clamp(data.penumbra ?? 0.25, 0, 1);
+        entry.light.distance = Math.max(data.distance ?? 36, 0);
+        entry.light.decay = Math.max(data.decay ?? 1, 0);
       } else {
         entry.light.width = data.width;
         entry.light.height = data.height;
@@ -648,6 +693,149 @@ class LightingScene {
     };
   }
 
+  async applyDatasetRecord(inputRecord) {
+    const record = normalizeDatasetRecord(inputRecord, inputRecord?.id);
+    this.modelGroup.position.set(0, 0, 0);
+    this.modelGroup.rotation.set(0, 0, 0);
+    this.modelGroup.scale.set(1, 1, 1);
+    await this.loadModel(record.scene.model, record.scene.material);
+
+    const transform = record.scene.modelTransform;
+    this.modelGroup.position.fromArray(transform.position);
+    this.modelGroup.rotation.fromArray(transform.rotation);
+    this.modelGroup.scale.fromArray(transform.scale);
+    this.modelGroup.updateMatrixWorld(true);
+    this.updateSubjectBounds();
+
+    this.scene.background.set(record.scene.backgroundColor);
+    if (this.ambientLight) this.ambientLight.intensity = record.scene.ambientIntensity;
+    this.applyDatasetRendererSettings(record.rendererSettings);
+    state.lights = record.lights.map(datasetLightToState);
+    this.buildLights();
+
+    this.setDatasetCamera(record.camera);
+    this.resizeLightingViewport();
+    this.renderer.render(this.scene, this.camera);
+    return record;
+  }
+
+  applyDatasetRendererSettings(settings = {}) {
+    if (settings.toneMapping && THREE[settings.toneMapping] !== undefined) {
+      this.renderer.toneMapping = THREE[settings.toneMapping];
+    }
+    if (Number.isFinite(settings.exposure)) this.renderer.toneMappingExposure = settings.exposure;
+    if (settings.outputColorSpace && THREE[settings.outputColorSpace] !== undefined) {
+      this.renderer.outputColorSpace = THREE[settings.outputColorSpace];
+    }
+    if (settings.shadowMap) {
+      this.renderer.shadowMap.enabled = settings.shadowMap.enabled !== false;
+      if (THREE[settings.shadowMap.type] !== undefined) this.renderer.shadowMap.type = THREE[settings.shadowMap.type];
+    }
+  }
+
+  setDatasetCamera(cameraConfig) {
+    this.camera.up.set(0, 1, 0);
+    this.camera.position.fromArray(cameraConfig.position);
+    this.cameraTarget.fromArray(cameraConfig.target);
+    this.camera.fov = cameraConfig.fov;
+    this.camera.lookAt(this.cameraTarget);
+    this.camera.updateProjectionMatrix();
+  }
+
+  withDatasetRenderSize(inputRecord, callback) {
+    const record = normalizeDatasetRecord(inputRecord, inputRecord?.id);
+    const previousPixelRatio = this.renderer.getPixelRatio();
+    const previousSize = this.renderer.getSize(new THREE.Vector2());
+    const previousAspect = this.camera.aspect;
+    try {
+      this.renderer.setPixelRatio(record.render.pixelRatio);
+      this.renderer.setSize(record.render.width, record.render.height, false);
+      this.camera.aspect = record.render.width / record.render.height;
+      this.camera.updateProjectionMatrix();
+      return callback(record);
+    } finally {
+      this.renderer.setPixelRatio(previousPixelRatio);
+      this.renderer.setSize(previousSize.x, previousSize.y, false);
+      this.camera.aspect = previousAspect;
+      this.camera.updateProjectionMatrix();
+      this.renderer.render(this.scene, this.camera);
+    }
+  }
+
+  captureDatasetPng(inputRecord) {
+    return this.withDatasetRenderSize(inputRecord, () => {
+      const hiddenRecords = hideCaptureExcludedObjects(this.scene);
+      try {
+        this.renderer.render(this.scene, this.camera);
+        return this.renderer.domElement.toDataURL('image/png');
+      } finally {
+        restoreCaptureExcludedObjects(hiddenRecords);
+      }
+    });
+  }
+
+  captureDatasetMaskPng(inputRecord) {
+    return this.withDatasetRenderSize(inputRecord, () => {
+      const previousBackground = this.scene.background;
+      const meshRecords = [];
+      const maskMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
+      this.scene.traverse((object) => {
+        if (!object.isMesh) return;
+        meshRecords.push({ object, visible: object.visible, material: object.material });
+        if (object === this.plinth || isDescendantOf(object, this.modelGroup)) {
+          object.visible = true;
+          object.material = maskMaterial;
+        } else {
+          object.visible = false;
+        }
+      });
+      this.scene.background = new THREE.Color(0x000000);
+      try {
+        this.renderer.render(this.scene, this.camera);
+        return this.renderer.domElement.toDataURL('image/png');
+      } finally {
+        this.scene.background = previousBackground;
+        meshRecords.forEach(({ object, visible, material }) => {
+          object.visible = visible;
+          object.material = material;
+        });
+        maskMaterial.dispose();
+      }
+    });
+  }
+
+  getDatasetRuntimeSettings() {
+    const toneMapping = threeConstantName(this.renderer.toneMapping, [
+      'NoToneMapping',
+      'LinearToneMapping',
+      'ReinhardToneMapping',
+      'CineonToneMapping',
+      'ACESFilmicToneMapping',
+      'AgXToneMapping',
+      'NeutralToneMapping',
+    ]);
+    const shadowMapType = threeConstantName(this.renderer.shadowMap.type, [
+      'BasicShadowMap',
+      'PCFShadowMap',
+      'PCFSoftShadowMap',
+      'VSMShadowMap',
+    ]);
+    return {
+      threeVersion: THREE.REVISION ? `0.${THREE.REVISION}.0` : '0.165.0',
+      rendererSettings: {
+        antialias: true,
+        preserveDrawingBuffer: true,
+        toneMapping,
+        exposure: this.renderer.toneMappingExposure,
+        outputColorSpace: threeConstantName(this.renderer.outputColorSpace, ['SRGBColorSpace', 'LinearSRGBColorSpace']),
+        shadowMap: {
+          enabled: this.renderer.shadowMap.enabled,
+          type: shadowMapType,
+        },
+      },
+    };
+  }
+
   getViewportSize() {
     const viewport = this.observedViewport || document.querySelector('#preview-stage') || this.canvas?.parentElement;
     const rect = viewport?.getBoundingClientRect?.();
@@ -732,6 +920,7 @@ async function initScene() {
     scene.updateLights(state.lights);
     scene.updateCamera(state.camera);
     scene.updateSurfaceSamples(state.surfaceIlluminanceSamples, state.showSurfaceSamples);
+    await initializeDatasetGeneratorScene();
   } catch (error) {
     console.error('Failed to initialize 3D scene. UI will continue with the 2D controls.', error);
     drawFallbackCanvas();
@@ -761,6 +950,15 @@ function createFallbackScene() {
         cameraTarget: finiteVector(pose.cameraTarget),
       };
     },
+    applyDatasetRecord: async (record) => normalizeDatasetRecord(record, record?.id),
+    captureDatasetPng: () => safeCanvasDataUrl(getSceneCanvas()),
+    captureDatasetMaskPng: () => safeCanvasDataUrl(getSceneCanvas()),
+    setDatasetCamera: () => {},
+    getDatasetRuntimeSettings: () => ({
+      threeVersion: '0.165.0',
+      rendererSettings: {},
+    }),
+    observeViewport: () => {},
   };
 }
 
@@ -800,6 +998,10 @@ function drawFallbackCanvas() {
 }
 
 function render() {
+  if (isDatasetGeneratorRoute()) {
+    renderDatasetGeneratorMode();
+    return;
+  }
   if (isAdminRoute()) {
     renderAdminView();
     return;
@@ -811,6 +1013,294 @@ function render() {
   if (state.phase === 'setup') renderSetup();
   if (state.phase === 'operation') renderOperation();
   if (state.phase === 'feedback') renderFeedback();
+}
+
+// ==============================
+// Dataset Generator
+// ==============================
+
+function isDatasetGeneratorRoute() {
+  return typeof window !== 'undefined' && window.location.pathname.replace(/\/+$/, '') === '/dataset-generator';
+}
+
+function renderDatasetGeneratorMode() {
+  if (datasetViewController) return;
+  activeDatasetRecord = createDefaultDatasetRecord();
+  datasetViewController = renderDatasetGeneratorView(app, {
+    models: MODEL_DEFINITIONS,
+    initialRecord: activeDatasetRecord,
+    conditionRecords: createBalancedConditionRecords60({ featureConfig: datasetFeatureConfig }),
+    replacementRecords: getDarkReplacementRecords(
+      createBalancedConditionRecords60({ featureConfig: datasetFeatureConfig }),
+    ),
+    getFeatureConfig: () => datasetFeatureConfig,
+    applyRecord: async (record) => {
+      await sceneInitializationPromise;
+      activeDatasetRecord = await scene.applyDatasetRecord(record);
+      scene.observeViewport?.(document.querySelector('#dataset-preview'));
+      return activeDatasetRecord;
+    },
+    captureRecord: async (record) => {
+      await sceneInitializationPromise;
+      return scene.captureDatasetPng(record);
+    },
+    generateCondition: async (record, onProgress) => {
+      await sceneInitializationPromise;
+      return generateDatasetCondition(record, onProgress);
+    },
+    generateCalibratedCondition: async (record, onProgress) => {
+      await sceneInitializationPromise;
+      return generateCalibratedDarkCondition(record, onProgress);
+    },
+    getActiveRecord: () => activeDatasetRecord,
+    setActiveRecord: (record) => {
+      activeDatasetRecord = normalizeDatasetRecord(record, record?.id);
+    },
+  });
+  const preview = document.querySelector('#dataset-preview');
+  const canvas = getSceneCanvas();
+  if (preview && canvas && canvas.parentElement !== preview) preview.appendChild(canvas);
+}
+
+async function initializeDatasetGeneratorScene() {
+  if (!isDatasetGeneratorRoute() || !activeDatasetRecord) return;
+  try {
+    datasetFeatureConfig = await loadDatasetFeatureConfig();
+    await scene.applyDatasetRecord(activeDatasetRecord);
+    scene.observeViewport?.(document.querySelector('#dataset-preview'));
+    datasetViewController?.setStatus(`${activeDatasetRecord.id} を表示しました`);
+  } catch (error) {
+    console.error('Failed to initialize dataset generator scene.', error);
+    datasetViewController?.setStatus(error.message || String(error), true);
+  }
+}
+
+async function loadDatasetFeatureConfig() {
+  try {
+    const response = await fetch('/dataset-config/feature-extraction.json', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return normalizeFeatureConfig(await response.json());
+  } catch (error) {
+    console.warn('Feature extraction config could not be loaded; defaults are used.', error);
+    return normalizeFeatureConfig(DEFAULT_FEATURE_EXTRACTION_CONFIG);
+  }
+}
+
+async function generateDatasetCondition(inputRecord, onProgress = () => {}) {
+  const preliminaryRecord = normalizeDatasetRecord(inputRecord, inputRecord.id);
+  await scene.applyDatasetRecord(preliminaryRecord);
+  const runtime = scene.getDatasetRuntimeSettings();
+  const record = normalizeDatasetRecord({
+    ...preliminaryRecord,
+    generator: {
+      ...(preliminaryRecord.generator || {}),
+      threeVersion: runtime.threeVersion,
+      gitCommit: DATASET_GENERATOR_GIT_COMMIT,
+    },
+    rendererSettings: runtime.rendererSettings,
+    featureExtraction: datasetFeatureConfig,
+  }, inputRecord.id);
+  record.angles = createDatasetCameraViews(record);
+  const views = [];
+  for (const [index, view] of record.angles.entries()) {
+    onProgress(`${view.angle} を撮影中`, index, record.angles.length);
+    scene.setDatasetCamera(view.camera);
+    const dataUrl = scene.captureDatasetPng(record);
+    const maskDataUrl = scene.captureDatasetMaskPng(record);
+    const [imageData, maskData] = await Promise.all([
+      imageDataFromDataUrl(dataUrl),
+      imageDataFromDataUrl(maskDataUrl),
+    ]);
+    const features = extractImageFeatures(imageData, maskData, datasetFeatureConfig);
+    views.push({
+      angle: view.angle,
+      dataUrl,
+      maskDataUrl,
+      imagePath: `images/${record.id}_${view.angle}.png`,
+      maskPath: `masks/${record.id}_${view.angle}_mask.png`,
+      camera: clone(view.camera),
+      features,
+    });
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  }
+  scene.setDatasetCamera(record.camera);
+  return { record, views };
+}
+
+async function generateCalibratedDarkCondition(inputRecord, onProgress = () => {}) {
+  const category = inputRecord.design?.brightnessCategory;
+  const targetRange = BRIGHTNESS_TARGET_RANGES[category];
+  if (!targetRange) throw new Error(`${inputRecord.id} に暗さ目標がありません。`);
+  const usesExtremeDarkTargets = category === 'extreme_dark';
+  let candidate = normalizeDatasetRecord(inputRecord, inputRecord.id);
+  const attempts = [];
+  let closestResult = null;
+  let closestMetrics = null;
+  let closestScore = Number.POSITIVE_INFINITY;
+  for (let attempt = 1; attempt <= 16; attempt += 1) {
+    onProgress(`輝度調整 ${attempt} / 16`);
+    const result = await generateDatasetCondition(candidate, onProgress);
+    const metrics = summarizeDarkCalibrationMetrics(result.views);
+    attempts.push({
+      attempt,
+      ...metrics,
+      intensities: result.record.lights.map((light) => light.intensity),
+    });
+    const deviation = darkCalibrationDeviation(metrics, targetRange, usesExtremeDarkTargets);
+    if (deviation < closestScore) {
+      closestResult = result;
+      closestMetrics = metrics;
+      closestScore = deviation;
+    }
+    if (isWithinDarkCalibrationTarget(metrics, targetRange, usesExtremeDarkTargets)) {
+      result.record.design.calibration = createDarkCalibrationMetadata(
+        targetRange,
+        usesExtremeDarkTargets,
+        metrics,
+        attempts,
+        true,
+      );
+      return result;
+    }
+    const factor = nextDarkCalibrationFactor(metrics, targetRange, usesExtremeDarkTargets);
+    candidate = withScaledDatasetLightIntensities(result.record, factor);
+  }
+  // A strict combination of brightness, dark-ratio, and highlight limits can be
+  // physically incompatible for a particular view. Preserve the closest image
+  // instead of brightening an intentionally difficult stimulus beyond its design range.
+  if (closestResult) {
+    closestResult.record.design.calibration = createDarkCalibrationMetadata(
+      targetRange,
+      usesExtremeDarkTargets,
+      closestMetrics,
+      attempts,
+      false,
+    );
+    onProgress(`${inputRecord.id} は近似条件として保存します（目標の一部が未達です）。`);
+    return closestResult;
+  }
+  throw new Error(`${inputRecord.id} の暗条件をレンダリングできませんでした。`);
+}
+
+function createDarkCalibrationMetadata(targetRange, usesExtremeDarkTargets, metrics, attempts, withinTarget) {
+  return {
+    targetMin: targetRange.min,
+    targetMax: targetRange.max,
+    ...(usesExtremeDarkTargets ? {
+      objectMeanTarget: EXTREME_DARK_TARGETS.objectMeanLuminance,
+      darkRatioTarget: EXTREME_DARK_TARGETS.darkRatio,
+      highlightRatioTarget: EXTREME_DARK_TARGETS.highlightRatio,
+      minimumPerViewObjectMeanLuminance: EXTREME_DARK_TARGETS.minimumPerViewObjectMeanLuminance,
+      maximumFrontObjectMeanLuminance: EXTREME_DARK_TARGETS.maximumFrontObjectMeanLuminance,
+      minimumFrontDarkRatio: EXTREME_DARK_TARGETS.minimumFrontDarkRatio,
+    } : {}),
+    achieved: metrics,
+    withinTarget,
+    attempts,
+  };
+}
+
+function summarizeDarkCalibrationMetrics(views) {
+  const average = (key) => views.reduce((sum, view) => sum + Number(view.features[key] || 0), 0) / views.length;
+  const front = views.find((view) => view.angle === 'front')?.features || {};
+  return {
+    meanLuminance: average('mean_luminance'),
+    objectMeanLuminance: average('object_mean_luminance'),
+    darkRatio: average('dark_ratio'),
+    highlightRatio: average('highlight_ratio'),
+    minimumPerViewObjectMeanLuminance: Math.min(
+      ...views.map((view) => Number(view.features.object_mean_luminance ?? view.features.mean_luminance ?? 0)),
+    ),
+    frontObjectMeanLuminance: Number(front.object_mean_luminance ?? front.mean_luminance ?? 0),
+    frontDarkRatio: Number(front.dark_ratio || 0),
+  };
+}
+
+function isWithinDarkCalibrationTarget(metrics, targetRange, usesExtremeDarkTargets) {
+  const inRange = (value, range) => value >= range.min && value <= range.max;
+  if (!inRange(metrics.meanLuminance, targetRange)) return false;
+  if (!usesExtremeDarkTargets) return true;
+  return inRange(metrics.objectMeanLuminance, EXTREME_DARK_TARGETS.objectMeanLuminance)
+    && inRange(metrics.darkRatio, EXTREME_DARK_TARGETS.darkRatio)
+    && inRange(metrics.highlightRatio, EXTREME_DARK_TARGETS.highlightRatio)
+    && metrics.minimumPerViewObjectMeanLuminance >= EXTREME_DARK_TARGETS.minimumPerViewObjectMeanLuminance
+    && metrics.frontObjectMeanLuminance <= EXTREME_DARK_TARGETS.maximumFrontObjectMeanLuminance
+    && metrics.frontDarkRatio >= EXTREME_DARK_TARGETS.minimumFrontDarkRatio;
+}
+
+function darkCalibrationDeviation(metrics, targetRange, usesExtremeDarkTargets) {
+  const distanceToRange = (value, range) => {
+    if (value < range.min) return (range.min - value) / Math.max(range.min, 0.0001);
+    if (value > range.max) return (value - range.max) / Math.max(range.max, 0.0001);
+    return 0;
+  };
+  let score = distanceToRange(metrics.meanLuminance, targetRange);
+  if (!usesExtremeDarkTargets) return score;
+  score += distanceToRange(metrics.objectMeanLuminance, EXTREME_DARK_TARGETS.objectMeanLuminance);
+  score += distanceToRange(metrics.darkRatio, EXTREME_DARK_TARGETS.darkRatio);
+  score += distanceToRange(metrics.highlightRatio, EXTREME_DARK_TARGETS.highlightRatio);
+  score += Math.max(
+    0,
+    (EXTREME_DARK_TARGETS.minimumPerViewObjectMeanLuminance - metrics.minimumPerViewObjectMeanLuminance)
+      / EXTREME_DARK_TARGETS.minimumPerViewObjectMeanLuminance,
+  );
+  score += Math.max(
+    0,
+    (metrics.frontObjectMeanLuminance - EXTREME_DARK_TARGETS.maximumFrontObjectMeanLuminance)
+      / EXTREME_DARK_TARGETS.maximumFrontObjectMeanLuminance,
+  );
+  score += Math.max(
+    0,
+    (EXTREME_DARK_TARGETS.minimumFrontDarkRatio - metrics.frontDarkRatio)
+      / EXTREME_DARK_TARGETS.minimumFrontDarkRatio,
+  );
+  return score;
+}
+
+function nextDarkCalibrationFactor(metrics, targetRange, usesExtremeDarkTargets) {
+  const targetMean = (targetRange.min + targetRange.max) / 2;
+  const tooBright = metrics.meanLuminance > targetRange.max
+    || (usesExtremeDarkTargets && (
+      metrics.darkRatio < EXTREME_DARK_TARGETS.darkRatio.min
+      || metrics.highlightRatio > EXTREME_DARK_TARGETS.highlightRatio.max
+      || metrics.frontObjectMeanLuminance > EXTREME_DARK_TARGETS.maximumFrontObjectMeanLuminance
+    ));
+  const tooDark = metrics.meanLuminance < targetRange.min
+    || (usesExtremeDarkTargets && (
+      metrics.darkRatio > EXTREME_DARK_TARGETS.darkRatio.max
+      || metrics.minimumPerViewObjectMeanLuminance < EXTREME_DARK_TARGETS.minimumPerViewObjectMeanLuminance
+    ));
+  if (tooBright) {
+    const rawFactor = metrics.meanLuminance > 0 ? targetMean / metrics.meanLuminance : 0.5;
+    return clamp(rawFactor, 0.45, 0.88);
+  }
+  if (tooDark) {
+    const rawFactor = metrics.meanLuminance > 0 ? targetMean / metrics.meanLuminance : 1.6;
+    return clamp(rawFactor, 1.08, 1.65);
+  }
+  return 0.9;
+}
+
+function withScaledDatasetLightIntensities(record, factor) {
+  const limits = record.design?.calibrationIntensityLimits;
+  const lights = record.lights.map((light, index) => ({
+    ...light,
+    intensity: clamp(
+      Math.round(light.intensity * factor),
+      Number(limits?.[index]?.[0] ?? 0),
+      Number(limits?.[index]?.[1] ?? 1000),
+    ),
+  }));
+  return normalizeDatasetRecord({
+    ...record,
+    lights,
+    design: {
+      ...record.design,
+      mainIntensity: lights[0]?.intensity,
+      fillIntensity: lights[1]?.intensity,
+      backIntensity: lights[2]?.intensity,
+    },
+  }, record.id);
 }
 
 // ==============================
@@ -4236,6 +4726,48 @@ function orientLightMarker(marker, pos, target, light, active) {
 
 function toThree(light) {
   return new THREE.Vector3(light.x, light.z, light.y);
+}
+
+function datasetLightToState(light) {
+  const [x, threeY, threeZ] = light.position;
+  const [targetX, targetThreeY, targetThreeZ] = light.target;
+  const dx = targetX - x;
+  const appForward = targetThreeZ - threeZ;
+  const appUp = targetThreeY - threeY;
+  const horizontal = Math.hypot(dx, appForward);
+  return {
+    id: light.id,
+    enabled: light.enabled !== false,
+    showHelper: false,
+    kind: light.type,
+    x,
+    y: threeZ,
+    z: threeY,
+    intensity: light.intensity,
+    spread: light.type === 'spot' ? light.angle : 0.5,
+    penumbra: light.type === 'spot' ? light.penumbra : 0,
+    distance: light.type === 'spot' ? light.distance : 0,
+    decay: light.type === 'spot' ? light.decay : 0,
+    width: light.type === 'area' ? light.width : 0.5,
+    height: light.type === 'area' ? light.height : 0.5,
+    elevation: Math.atan2(appUp, horizontal) * 180 / Math.PI,
+    azimuth: Math.atan2(dx, appForward) * 180 / Math.PI,
+    color: light.color,
+    datasetSource: true,
+  };
+}
+
+function isDescendantOf(object, ancestor) {
+  let current = object;
+  while (current) {
+    if (current === ancestor) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function threeConstantName(value, names) {
+  return names.find((name) => THREE[name] === value) || String(value ?? '');
 }
 
 function targetFromAngles(light) {

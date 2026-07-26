@@ -52,6 +52,12 @@
     this.listeners[type].push(listener);
   }
 
+  appendChild(child) {
+    child.parentElement = this;
+    this.children.push(child);
+    return child;
+  }
+
   dispatchEvent(event) {
     event.target ||= this;
     const listeners = this.listeners[event.type] || [];
@@ -962,5 +968,14 @@ assert(api.state.openCampus.hintOpenedAtMs === null && api.state.openCampus.acti
 assert(api.state.camera.theta === 0 && api.state.camera.phi === 58, 'next participant should receive the initial camera state');
 assert(api.state.lights[1].width === 0.5 && api.state.lights[1].height === 0.5, 'next participant should receive initial lighting state');
 assert(api.state.completionError === '' && api.state.modelError === '', 'next participant should not inherit errors');
+
+window.location.pathname = '/dataset-generator';
+api.render();
+assert(app.innerHTML.includes('感性評価モデル用 画像生成'), 'dataset generator route should render its dedicated screen');
+assert(app.querySelector('#dataset-json'), 'dataset generator should expose JSON input');
+assert(app.querySelector('#dataset-apply')?.type === 'button', 'dataset apply action should not submit a form');
+assert(app.querySelector('#dataset-batch')?.type === 'button', 'dataset batch action should not submit a form');
+assert(app.querySelector('#dataset-regenerate-dark')?.type === 'button', 'dark replacements should have a dedicated non-submit action');
+assert(document.querySelector('#scene').parentElement?.id === 'dataset-preview', 'dataset generator should place the canvas inside its preview');
 
 console.log('phase-flow-test: all phase operations passed');
