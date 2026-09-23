@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Canonical Normal Pass Export</title></head>
+<body>
+<h1>Canonical Normal Pass Export</h1>
+<p id="status">Loading Three.js and the fixed DAV scene…</p>
+<button id="export" disabled>Export canonical_normal_C000.png</button>
+<pre id="details"></pre>
+<script type="module">
+import * as THREE from 'https://esm.sh/three@0.165.0';
+import { GLTFLoader } from 'https://esm.sh/three@0.165.0/examples/jsm/loaders/GLTFLoader.js';
+
+const WIDTH = 512;
+const HEIGHT = 512;
+const PIXEL_RATIO = 1;
+const CAMERA = { position: [0, 2.4, 7.4], target: [0, 1.55, 0], fov: 42 };
+const MODEL_URL = '/models/dav.glb';
+const TARGET_HEIGHT = 2.7;
+const PLINTH_TOP_Y = 0.38;
+const details = document.querySelector('#details');
+const status = document.querySelector('#status');
+const button = document.querySelector('#export');
+let renderer, target, normalPixels;
+
+function applyCanonicalTransform(subject) {
+  subject.rotation.set(Math.PI / 2, 0, 0);
+  subject.updateMatrixWorld(true);
+  const source = new THREE.Box3().setFromObject(subject);
+  const size = source.getSize(new THREE.Vector3());
+  const scale = TARGET_HEIGHT / size.y;
+  subject.scale.multiplyScalar(scale);
+  subject.updateMatrixWorld(true);
+  const scaled = new THREE.Box3().setFromObject(subject);
+  const center = scaled.getCenter(new THREE.Vector3());
+  subject.position.x -= center.x;
+  subject.position.z -= center.z;
+  subject.position.y += PLINTH_TOP_Y - scaled.min.y;
+  subject.updateMatrixWorld(true);
+  return { scale, bounds: new THREE.Box3().setFromObject(subject) };
+}
+
+function savePng(pixels) {
+  const canvas = document.createElement('canvas'); canvas.width = WIDTH; canvas.height = HEIGHT;
+  const ctx = canvas.getContext('2d'); const image = ctx.createImageData(WIDTH, HEIGHT);
+  // WebGL readback is bottom-left origin; PNG canvas is top-left origin.
+  for (let y = 0; y < HEIGHT; y++) {
+    const src = (HEIGHT - 1 - y) * WIDTH * 4;
+    image.data.set(pixels.subarray(src, src + WIDTH * 4), y * WIDTH * 4);
+  }
+  ctx.putImageData(image, 0, 0);
+  const a = document.createElement('a'); a.download = 'canonical_normal_C000.png'; a.href = canvas.toDataURL('image/png'); a.click();
+}
+
+async function main() {
+  renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true, alpha: false });
+  renderer.setPixelRatio(PIXEL_RATIO); renderer.setSize(WIDTH, HEIGHT, false);
+  renderer.toneMapping = THREE.NoToneMapping;
+  if (THREE.LinearSRGBColorSpace) renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  renderer.setClearColor(0x000000, 1);
+  target = new THREE.WebGLRenderTarget(WIDTH, HEIGHT, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType, depthBuffer: true, stencilBuffer: false });
+  target.texture.colorSpace = THREE.NoColorSpace;
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x000000);
+  const camera = new THREE.PerspectiveCamera(CAMERA.fov, WIDTH / HEIGHT, 0.1, 100);
+  camera.position.fromArray(CAMERA.position); camera.lookAt(new THREE.Vector3().fromArray(CAMERA.target)); camera.updateProjectionMatrix();
+  const gltf = await new GLTFLoader().loadAsync(MODEL_URL); const subject = gltf.scene || gltf.scenes?.[0];
+  if (!subject) throw new Error('DAV model scene was not found');
+  const transform = applyCanonicalTransform(subject);
+  subject.traverse((node) => { if (node.isMesh) { node.material = new THREE.MeshNormalMaterial({ flatShading: false }); node.castShadow = false; node.receiveShadow = false; } });
+  scene.add(subject);
+  renderer.setRenderTarget(target); renderer.clear(true, true, true); renderer.render(scene, camera);
+  normalPixels = new Uint8Array(WIDTH * HEIGHT * 4); renderer.readRenderTargetPixels(target, 0, 0, WIDTH, HEIGHT, normalPixels); renderer.setRenderTarget(null);
+  details.textContent = JSON.stringify({ model: MODEL_URL, width: WIDTH, height: HEIGHT, pixelRatio: PIXEL_RATIO, camera: CAMERA, fov: CAMERA.fov, modelRotationRad: [Math.PI / 2, 0, 0], targetHeight: TARGET_HEIGHT, plinthTopY: PLINTH_TOP_Y, normalSpace: 'camera/view space', encoding: 'RGB = normal * 0.5 + 0.5; decode = RGB * 2 - 1', toneMapping: 'NoToneMapping', outputColorSpace: 'LinearSRGBColorSpace' }, null, 2);
+  status.textContent = 'Ready. This page is independent of the normal lighting renderer.'; button.disabled = false;
+  button.onclick = () => savePng(normalPixels);
+}
+main().catch((error) => { status.textContent = `Export failed: ${error.message}`; console.error(error); });
+</script>
+</body></html>
